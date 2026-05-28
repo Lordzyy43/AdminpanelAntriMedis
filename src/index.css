@@ -20,7 +20,9 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background: #f6fafb;
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 164, 0.12), transparent 34rem),
+    linear-gradient(180deg, #f8fcfd 0%, #eef6f7 100%);
 }
 
 button,
@@ -32,4 +34,8 @@ textarea {
 
 button {
   cursor: pointer;
+}
+
+::selection {
+  background: rgba(14, 165, 164, 0.2);
 }
