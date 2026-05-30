@@ -3,11 +3,14 @@ import {
   CalendarPlus,
   CalendarRange,
   Clock3,
+  Eye,
   Loader2,
   Pencil,
+  Plus,
   RefreshCw,
   Save,
   Search,
+  Trash2,
   X,
 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
@@ -18,13 +21,19 @@ import { Button } from '../../../components/ui/button'
 import { Card } from '../../../components/ui/card'
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog'
 import { FeedbackBanner } from '../../../components/ui/feedback-banner'
+import { FormDrawer } from '../../../components/ui/form-drawer'
 import { Input } from '../../../components/ui/input'
 import { PageHeader } from '../../../components/ui/page-header'
+import { Pagination } from '../../../components/ui/pagination'
 import { StatCard } from '../../../components/ui/stat-card'
+import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table-state'
+import { useToast } from '../../../components/ui/use-toast'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
+import { paginateItems } from '../../../lib/pagination'
 import type { ScheduleAvailability, ScheduleStatus } from '../../../types/queue'
 import {
   createSchedule,
+  deleteSchedule,
   fetchScheduleManagementRows,
   fetchScheduleReferences,
   updateSchedule,
@@ -63,6 +72,7 @@ const statusOptions: Array<{ value: ScheduleStatus; label: string }> = [
 ]
 
 const today = new Date().toISOString().slice(0, 10)
+const pageSize = 8
 
 const emptyDraft: ScheduleDraft = {
   branch_id: '',
@@ -79,12 +89,17 @@ const emptyDraft: ScheduleDraft = {
 
 export function ScheduleManagementPage() {
   const queryClient = useQueryClient()
+  const { notify } = useToast()
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
+  const [detailSchedule, setDetailSchedule] = useState<ScheduleAvailability | null>(null)
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [draft, setDraft] = useState<ScheduleDraft>(emptyDraft)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<ScheduleAvailability | null>(null)
   const [pendingSave, setPendingSave] = useState<PendingScheduleSave | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [dateFilter, setDateFilter] = useState(today)
+  const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<ScheduleStatus | 'all'>('all')
 
   const schedulesQuery = useQuery({
@@ -135,11 +150,22 @@ export function ScheduleManagementPage() {
       )
     })
   }, [dateFilter, schedules, searchTerm, statusFilter])
+  const paginatedSchedules = useMemo(
+    () => paginateItems(filteredSchedules, page, pageSize),
+    [filteredSchedules, page],
+  )
 
   const filteredPolyclinics =
     references?.polyclinics.filter(
       (polyclinic) => !draft.branch_id || polyclinic.branch_id === draft.branch_id,
     ) ?? []
+
+  function defaultDraft(): ScheduleDraft {
+    return {
+      ...emptyDraft,
+      branch_id: references?.branches[0]?.id ?? '',
+    }
+  }
 
   const saveMutation = useMutation({
     mutationFn: (payload: SchedulePayload) =>
@@ -147,24 +173,51 @@ export function ScheduleManagementPage() {
         ? updateSchedule(editingScheduleId, payload)
         : createSchedule(payload),
     onSuccess: async () => {
+      const successMessage = editingScheduleId
+        ? 'Jadwal berhasil diperbarui.'
+        : 'Jadwal baru berhasil dibuat.'
       setNotice({
-        text: editingScheduleId
-          ? 'Jadwal berhasil diperbarui.'
-          : 'Jadwal baru berhasil dibuat.',
+        text: successMessage,
         tone: 'success',
       })
+      notify({ message: successMessage, title: 'Berhasil', tone: 'success' })
       setEditingScheduleId(null)
       setDraft(emptyDraft)
       setPendingSave(null)
+      setIsDrawerOpen(false)
       await queryClient.invalidateQueries({ queryKey: ['schedule-management'] })
       await queryClient.invalidateQueries({ queryKey: ['schedules'] })
     },
     onError: (error) => {
+      const message = friendlySupabaseError(error, 'Gagal menyimpan jadwal.')
       setNotice({
-        text: friendlySupabaseError(error, 'Gagal menyimpan jadwal.'),
+        text: message,
         title: 'Jadwal gagal disimpan',
         tone: 'danger',
       })
+      notify({ message, title: 'Gagal menyimpan', tone: 'danger' })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteSchedule,
+    onSuccess: async () => {
+      const successMessage = 'Jadwal berhasil dihapus.'
+      setNotice({ text: successMessage, tone: 'success' })
+      notify({ message: successMessage, title: 'Berhasil', tone: 'success' })
+      setPendingDelete(null)
+      await queryClient.invalidateQueries({ queryKey: ['schedule-management'] })
+      await queryClient.invalidateQueries({ queryKey: ['schedules'] })
+    },
+    onError: (error) => {
+      const message = friendlySupabaseError(error, 'Gagal menghapus jadwal.')
+      setNotice({
+        text: message,
+        title: 'Jadwal gagal dihapus',
+        tone: 'danger',
+      })
+      notify({ message, title: 'Gagal menghapus', tone: 'danger' })
+      setPendingDelete(null)
     },
   })
 
@@ -174,6 +227,13 @@ export function ScheduleManagementPage() {
       [key]: value,
       ...(key === 'branch_id' ? { polyclinic_id: '' } : {}),
     }))
+  }
+
+  function startCreate() {
+    setNotice(null)
+    setEditingScheduleId(null)
+    setDraft(defaultDraft())
+    setIsDrawerOpen(true)
   }
 
   function startEdit(schedule: ScheduleAvailability) {
@@ -191,6 +251,7 @@ export function ScheduleManagementPage() {
       status: schedule.status,
       notes: '',
     })
+    setIsDrawerOpen(true)
   }
 
   function resetForm() {
@@ -198,6 +259,7 @@ export function ScheduleManagementPage() {
     setEditingScheduleId(null)
     setDraft(emptyDraft)
     setPendingSave(null)
+    setIsDrawerOpen(false)
   }
 
   function submitForm(event: FormEvent<HTMLFormElement>) {
@@ -263,16 +325,22 @@ export function ScheduleManagementPage() {
       <div className="space-y-5">
         <PageHeader
           actions={
-            <Button
-              variant="secondary"
-              onClick={() => {
-                void schedulesQuery.refetch()
-                void referencesQuery.refetch()
-              }}
-            >
-              <RefreshCw size={16} />
-              Refresh
-            </Button>
+            <>
+              <Button onClick={startCreate}>
+                <Plus size={16} />
+                Buat Jadwal
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void schedulesQuery.refetch()
+                  void referencesQuery.refetch()
+                }}
+              >
+                <RefreshCw size={16} />
+                Refresh
+              </Button>
+            </>
           }
           description="Atur sesi praktik, kuota, status buka, dan durasi layanan."
           eyebrow="Schedule Control"
@@ -310,12 +378,187 @@ export function ScheduleManagementPage() {
           />
         </div>
 
-        <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
+        {notice && !isDrawerOpen ? (
+          <FeedbackBanner title={notice.title} tone={notice.tone}>
+            {notice.text}
+          </FeedbackBanner>
+        ) : null}
+
+        <Card className="overflow-hidden">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <h3 className="font-black">Daftar Jadwal Praktik</h3>
+                <p className="text-sm text-slate-500">
+                  Menampilkan {filteredSchedules.length} dari {schedules.length}{' '}
+                  jadwal.
+                </p>
+              </div>
+              <div className="grid gap-2 md:grid-cols-[minmax(220px,280px)_160px_180px]">
+                <div className="relative">
+                  <Search
+                    className="absolute left-3 top-3 text-slate-400"
+                    size={17}
+                  />
+                  <Input
+                    className="pl-10"
+                    placeholder="Cari dokter / poli"
+                    value={searchTerm}
+                    onChange={(event) => {
+                      setSearchTerm(event.target.value)
+                      setPage(1)
+                    }}
+                  />
+                </div>
+                <Input
+                  type="date"
+                  value={dateFilter}
+                  onChange={(event) => {
+                    setDateFilter(event.target.value)
+                    setPage(1)
+                  }}
+                />
+                <select
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
+                  value={statusFilter}
+                  onChange={(event) => {
+                    setStatusFilter(event.target.value as ScheduleStatus | 'all')
+                    setPage(1)
+                  }}
+                >
+                  <option value="all">Semua status</option>
+                  {statusOptions.map((status) => (
+                    <option key={status.value} value={status.value}>
+                      {status.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Tanggal</th>
+                  <th className="px-4 py-3">Poli & Dokter</th>
+                  <th className="px-4 py-3">Jam</th>
+                  <th className="px-4 py-3">Kuota</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {schedulesQuery.isLoading ? (
+                  <TableSkeletonRows columns={6} />
+                ) : filteredSchedules.length === 0 ? (
+                  <TableEmptyState
+                    action={
+                      <Button onClick={startCreate}>
+                        <Plus size={16} />
+                        Buat Jadwal
+                      </Button>
+                    }
+                    colSpan={6}
+                    description="Buat jadwal praktik agar aplikasi pasien punya sesi antrean yang bisa dipilih."
+                    title={
+                      schedules.length === 0
+                        ? 'Belum ada jadwal praktik'
+                        : 'Tidak ada jadwal yang cocok'
+                    }
+                  />
+                ) : (
+                  paginatedSchedules.items.map((schedule) => (
+                    <tr className="transition hover:bg-slate-50/80" key={schedule.schedule_id}>
+                      <td className="px-4 py-3 font-bold">
+                        {schedule.schedule_date}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-bold text-slate-900">
+                          {schedule.polyclinic_name}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {schedule.doctor_name}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2 font-bold">
+                          <Clock3 size={15} />
+                          {schedule.start_time.slice(0, 5)}-
+                          {schedule.end_time.slice(0, 5)}
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {schedule.average_service_minutes} menit/pasien
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-black">
+                          {schedule.total_taken}/{schedule.quota_limit}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          sisa {schedule.remaining_quota}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <ScheduleStatusBadge status={schedule.status} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            onClick={() => setDetailSchedule(schedule)}
+                          >
+                            <Eye size={16} />
+                            Detail
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => startEdit(schedule)}
+                          >
+                            <Pencil size={16} />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="danger"
+                            onClick={() => setPendingDelete(schedule)}
+                          >
+                            <Trash2 size={16} />
+                            Hapus
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            currentPage={paginatedSchedules.page}
+            onPageChange={setPage}
+            pageSize={pageSize}
+            totalItems={filteredSchedules.length}
+          />
+        </Card>
+
+        <FormDrawer
+          description="Atur dokter, poli, tanggal, jam praktik, kuota, status, dan durasi rata-rata layanan."
+          open={isDrawerOpen}
+          title={editingScheduleId ? 'Edit Jadwal' : 'Buat Jadwal'}
+          onClose={resetForm}
+        >
+          {notice ? (
+            <div className="mb-4">
+              <FeedbackBanner title={notice.title} tone={notice.tone}>
+                {notice.text}
+              </FeedbackBanner>
+            </div>
+          ) : null}
           <Card className="p-5">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-black">
-                  {editingScheduleId ? 'Edit Jadwal' : 'Tambah Jadwal'}
+                  {editingScheduleId ? 'Detail Jadwal' : 'Jadwal Baru'}
                 </h3>
                 <p className="text-sm text-slate-500">
                   Jadwal aktif otomatis disiapkan sebagai sesi antrean.
@@ -323,14 +566,6 @@ export function ScheduleManagementPage() {
               </div>
               <CalendarPlus className="text-teal-600" size={22} />
             </div>
-
-            {notice ? (
-              <div className="mb-4">
-                <FeedbackBanner title={notice.title} tone={notice.tone}>
-                  {notice.text}
-                </FeedbackBanner>
-              </div>
-            ) : null}
 
             <form className="space-y-4" onSubmit={submitForm}>
               <Field label="Cabang">
@@ -462,131 +697,23 @@ export function ScheduleManagementPage() {
               </div>
             </form>
           </Card>
-
-          <Card className="overflow-hidden">
-            <div className="border-b border-slate-200 px-4 py-3">
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                <div>
-                  <h3 className="font-black">Daftar Jadwal Praktik</h3>
-                  <p className="text-sm text-slate-500">
-                    Menampilkan {filteredSchedules.length} dari {schedules.length}{' '}
-                    jadwal.
-                  </p>
-                </div>
-                <div className="grid gap-2 md:grid-cols-[minmax(220px,280px)_160px_180px]">
-                  <div className="relative">
-                    <Search
-                      className="absolute left-3 top-3 text-slate-400"
-                      size={17}
-                    />
-                    <Input
-                      className="pl-10"
-                      placeholder="Cari dokter / poli"
-                      value={searchTerm}
-                      onChange={(event) => setSearchTerm(event.target.value)}
-                    />
-                  </div>
-                  <Input
-                    type="date"
-                    value={dateFilter}
-                    onChange={(event) => setDateFilter(event.target.value)}
-                  />
-                  <select
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
-                    value={statusFilter}
-                    onChange={(event) =>
-                      setStatusFilter(event.target.value as ScheduleStatus | 'all')
-                    }
-                  >
-                    <option value="all">Semua status</option>
-                    {statusOptions.map((status) => (
-                      <option key={status.value} value={status.value}>
-                        {status.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Tanggal</th>
-                    <th className="px-4 py-3">Poli & Dokter</th>
-                    <th className="px-4 py-3">Jam</th>
-                    <th className="px-4 py-3">Kuota</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {schedulesQuery.isLoading ? (
-                    <tr>
-                      <td className="px-4 py-8 text-center text-slate-500" colSpan={6}>
-                        Memuat jadwal...
-                      </td>
-                    </tr>
-                  ) : filteredSchedules.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-8 text-center text-slate-500" colSpan={6}>
-                        Tidak ada jadwal yang cocok dengan filter.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredSchedules.map((schedule) => (
-                      <tr className="transition hover:bg-slate-50/80" key={schedule.schedule_id}>
-                        <td className="px-4 py-3 font-bold">
-                          {schedule.schedule_date}
-                        </td>
-                        <td className="px-4 py-3">
-                          <p className="font-bold text-slate-900">
-                            {schedule.polyclinic_name}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            {schedule.doctor_name}
-                          </p>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2 font-bold">
-                            <Clock3 size={15} />
-                            {schedule.start_time.slice(0, 5)}-
-                            {schedule.end_time.slice(0, 5)}
-                          </div>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {schedule.average_service_minutes} menit/pasien
-                          </p>
-                        </td>
-                        <td className="px-4 py-3">
-                          <p className="font-black">
-                            {schedule.total_taken}/{schedule.quota_limit}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            sisa {schedule.remaining_quota}
-                          </p>
-                        </td>
-                        <td className="px-4 py-3">
-                          <ScheduleStatusBadge status={schedule.status} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-end">
-                            <Button
-                              variant="secondary"
-                              onClick={() => startEdit(schedule)}
-                            >
-                              <Pencil size={16} />
-                              Edit
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
+        </FormDrawer>
+        <FormDrawer
+          description="Ringkasan operasional jadwal dan sesi antrean."
+          open={Boolean(detailSchedule)}
+          title="Detail Jadwal"
+          onClose={() => setDetailSchedule(null)}
+        >
+          {detailSchedule ? (
+            <ScheduleDetailPanel
+              schedule={detailSchedule}
+              onEdit={() => {
+                startEdit(detailSchedule)
+                setDetailSchedule(null)
+              }}
+            />
+          ) : null}
+        </FormDrawer>
         <ConfirmDialog
           confirmLabel="Simpan Perubahan"
           description={buildScheduleConfirmDescription(pendingSave)}
@@ -597,8 +724,108 @@ export function ScheduleManagementPage() {
           onCancel={() => setPendingSave(null)}
           onConfirm={confirmPendingSave}
         />
+        <ConfirmDialog
+          confirmLabel="Hapus"
+          description={buildScheduleDeleteDescription(pendingDelete)}
+          icon={<Trash2 size={20} />}
+          isLoading={deleteMutation.isPending}
+          open={Boolean(pendingDelete)}
+          title="Hapus jadwal?"
+          tone="danger"
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            if (pendingDelete) deleteMutation.mutate(pendingDelete.schedule_id)
+          }}
+        />
       </div>
     </AdminLayout>
+  )
+}
+
+function ScheduleDetailPanel({
+  onEdit,
+  schedule,
+}: {
+  onEdit: () => void
+  schedule: ScheduleAvailability
+}) {
+  const quotaUsage =
+    schedule.quota_limit === 0
+      ? 0
+      : Math.round((schedule.total_taken / schedule.quota_limit) * 100)
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-black uppercase tracking-wide text-teal-700">
+              {schedule.branch_name}
+            </p>
+            <h3 className="mt-1 text-xl font-black text-slate-950">
+              {schedule.polyclinic_name}
+            </h3>
+            <p className="mt-1 text-sm font-semibold text-slate-500">
+              {schedule.doctor_name}
+            </p>
+          </div>
+          <ScheduleStatusBadge status={schedule.status} />
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <DetailMetric label="Tanggal" value={schedule.schedule_date} />
+          <DetailMetric
+            label="Jam praktik"
+            value={`${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)}`}
+          />
+          <DetailMetric
+            label="Durasi layanan"
+            value={`${schedule.average_service_minutes} menit/pasien`}
+          />
+          <DetailMetric
+            label="Sesi antrean"
+            value={schedule.queue_session_id ? 'Tersedia' : 'Belum tersedia'}
+          />
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="font-black text-slate-950">Kapasitas</h3>
+          <span className="text-sm font-black text-teal-700">{quotaUsage}%</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className="h-full rounded-full bg-teal-600"
+            style={{ width: `${Math.min(quotaUsage, 100)}%` }}
+          />
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <DetailMetric label="Diambil" value={schedule.total_taken} />
+          <DetailMetric label="Kuota" value={schedule.quota_limit} />
+          <DetailMetric label="Sisa" value={schedule.remaining_quota} />
+        </div>
+      </Card>
+
+      <Button className="w-full" variant="secondary" onClick={onEdit}>
+        <Pencil size={16} />
+        Edit Jadwal
+      </Button>
+    </div>
+  )
+}
+
+function DetailMetric({
+  label,
+  value,
+}: {
+  label: string
+  value: number | string
+}) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-3">
+      <p className="text-xs font-bold text-slate-500">{label}</p>
+      <p className="mt-1 font-black text-slate-950">{value}</p>
+    </div>
   )
 }
 
@@ -613,6 +840,16 @@ function buildScheduleConfirmDescription(pendingSave: PendingScheduleSave | null
   }
 
   return 'Perubahan jadwal akan memengaruhi pilihan jadwal yang terlihat di aplikasi pasien.'
+}
+
+function buildScheduleDeleteDescription(schedule: ScheduleAvailability | null) {
+  if (!schedule) return 'Jadwal akan dihapus.'
+
+  if (schedule.total_taken > 0) {
+    return `Jadwal ${schedule.polyclinic_name} sudah memiliki ${schedule.total_taken} tiket antrean. Sistem akan menolak hapus permanen; gunakan status Batal atau Tutup agar histori pasien tetap aman.`
+  }
+
+  return `Jadwal ${schedule.polyclinic_name} ${schedule.schedule_date} pukul ${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)} akan dihapus permanen karena belum memiliki tiket antrean.`
 }
 
 function Field({

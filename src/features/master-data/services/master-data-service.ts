@@ -62,6 +62,14 @@ export async function updateDoctor(doctorId: string, payload: DoctorPayload) {
   if (error) throw error
 }
 
+export async function deleteDoctor(doctorId: string) {
+  const { error } = await supabase.rpc('delete_doctor_if_unused', {
+    p_doctor_id: doctorId,
+  })
+
+  if (error) throw error
+}
+
 export async function createPolyclinic(payload: PolyclinicPayload) {
   const { error } = await supabase.from('polyclinics').insert(payload)
   if (error) throw error
@@ -75,6 +83,14 @@ export async function updatePolyclinic(
     .from('polyclinics')
     .update(payload)
     .eq('id', polyclinicId)
+
+  if (error) throw error
+}
+
+export async function deletePolyclinic(polyclinicId: string) {
+  const { error } = await supabase.rpc('delete_polyclinic_if_unused', {
+    p_polyclinic_id: polyclinicId,
+  })
 
   if (error) throw error
 }

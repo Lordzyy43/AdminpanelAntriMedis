@@ -59,40 +59,44 @@ export async function fetchScheduleReferences() {
 }
 
 export async function createSchedule(payload: SchedulePayload) {
-  const { data, error } = await supabase
-    .from('doctor_schedules')
-    .insert(payload)
-    .select('id')
-    .single()
-
-  if (error) throw error
-
-  const { error: sessionError } = await supabase.from('queue_sessions').insert({
-    schedule_id: data.id,
-    is_open: payload.status === 'open',
-    started_at: payload.status === 'open' ? new Date().toISOString() : null,
-    closed_at: payload.status === 'open' ? null : new Date().toISOString(),
+  const { error } = await supabase.rpc('create_schedule_with_session', {
+    p_average_service_minutes: payload.average_service_minutes,
+    p_branch_id: payload.branch_id,
+    p_doctor_id: payload.doctor_id,
+    p_end_time: payload.end_time,
+    p_notes: payload.notes ?? null,
+    p_polyclinic_id: payload.polyclinic_id,
+    p_quota_limit: payload.quota_limit,
+    p_schedule_date: payload.schedule_date,
+    p_start_time: payload.start_time,
+    p_status: payload.status,
   })
 
-  if (sessionError) throw sessionError
+  if (error) throw error
 }
 
 export async function updateSchedule(scheduleId: string, payload: SchedulePayload) {
-  const { error } = await supabase
-    .from('doctor_schedules')
-    .update(payload)
-    .eq('id', scheduleId)
+  const { error } = await supabase.rpc('update_schedule_with_session', {
+    p_average_service_minutes: payload.average_service_minutes,
+    p_branch_id: payload.branch_id,
+    p_doctor_id: payload.doctor_id,
+    p_end_time: payload.end_time,
+    p_notes: payload.notes ?? null,
+    p_polyclinic_id: payload.polyclinic_id,
+    p_quota_limit: payload.quota_limit,
+    p_schedule_date: payload.schedule_date,
+    p_schedule_id: scheduleId,
+    p_start_time: payload.start_time,
+    p_status: payload.status,
+  })
 
   if (error) throw error
+}
 
-  const isOpen = payload.status === 'open'
-  const { error: sessionError } = await supabase
-    .from('queue_sessions')
-    .update({
-      is_open: isOpen,
-      closed_at: isOpen ? null : new Date().toISOString(),
-    })
-    .eq('schedule_id', scheduleId)
+export async function deleteSchedule(scheduleId: string) {
+  const { error } = await supabase.rpc('delete_schedule_if_empty', {
+    p_schedule_id: scheduleId,
+  })
 
-  if (sessionError) throw sessionError
+  if (error) throw error
 }

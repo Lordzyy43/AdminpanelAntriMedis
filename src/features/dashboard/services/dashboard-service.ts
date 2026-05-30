@@ -1,8 +1,15 @@
 import { supabase } from '../../../lib/supabase'
-import type { Doctor, Polyclinic, QueueTicketDetail, ScheduleAvailability } from '../../../types/queue'
+import type {
+  Doctor,
+  Polyclinic,
+  QueueEventFeedItem,
+  QueueTicketDetail,
+  ScheduleAvailability,
+} from '../../../types/queue'
 
 export type DashboardData = {
   doctors: Doctor[]
+  events: QueueEventFeedItem[]
   polyclinics: Polyclinic[]
   schedules: ScheduleAvailability[]
   tickets: QueueTicketDetail[]
@@ -11,7 +18,7 @@ export type DashboardData = {
 export async function fetchDashboardData(): Promise<DashboardData> {
   const today = new Date().toISOString().slice(0, 10)
 
-  const [schedules, tickets, doctors, polyclinics] = await Promise.all([
+  const [schedules, tickets, events, doctors, polyclinics] = await Promise.all([
     supabase
       .from('v_schedule_availability')
       .select('*')
@@ -22,6 +29,12 @@ export async function fetchDashboardData(): Promise<DashboardData> {
       .select('*')
       .eq('schedule_date', today)
       .order('created_at', { ascending: false }),
+    supabase
+      .from('v_queue_event_feed')
+      .select('*')
+      .eq('schedule_date', today)
+      .order('created_at', { ascending: false })
+      .limit(12),
     supabase
       .from('doctors')
       .select(
@@ -36,11 +49,13 @@ export async function fetchDashboardData(): Promise<DashboardData> {
 
   if (schedules.error) throw schedules.error
   if (tickets.error) throw tickets.error
+  if (events.error) throw events.error
   if (doctors.error) throw doctors.error
   if (polyclinics.error) throw polyclinics.error
 
   return {
     doctors: doctors.data as Doctor[],
+    events: events.data as QueueEventFeedItem[],
     polyclinics: polyclinics.data as Polyclinic[],
     schedules: schedules.data as ScheduleAvailability[],
     tickets: tickets.data as QueueTicketDetail[],

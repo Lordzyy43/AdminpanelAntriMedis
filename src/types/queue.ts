@@ -63,6 +63,25 @@ export type QueueTicketDetail = {
   specialization: string | null
 }
 
+export type QueueEventFeedItem = {
+  event_id: string
+  queue_ticket_id: string
+  actor_id: string | null
+  previous_status: QueueStatus | null
+  new_status: QueueStatus
+  message: string | null
+  created_at: string
+  queue_code: string
+  patient_id: string
+  patient_name: string
+  polyclinic_name: string
+  doctor_name: string
+  branch_name: string
+  schedule_date: string
+  start_time: string
+  end_time: string
+}
+
 export type ClinicBranch = {
   id: string
   name: string
