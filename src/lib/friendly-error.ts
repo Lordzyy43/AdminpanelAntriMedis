@@ -24,6 +24,57 @@ export function friendlySupabaseError(error: unknown, fallback: string) {
     return 'Akses ditolak. Pastikan akun yang digunakan memiliki role admin klinik.'
   }
 
+  if (normalized.includes('current queue must be resolved')) {
+    return 'Selesaikan, layani, lewati, atau batalkan antrean yang sedang dipanggil sebelum memanggil nomor berikutnya.'
+  }
+
+  if (normalized.includes('invalid queue status transition')) {
+    return 'Perubahan status antrean tidak valid. Refresh data lalu lanjutkan sesuai urutan antrean.'
+  }
+
+  if (normalized.includes('no waiting queue found')) {
+    return 'Belum ada pasien yang menunggu pada sesi antrean ini.'
+  }
+
+  if (
+    normalized.includes('queue session is closed') ||
+    normalized.includes('schedule is not open')
+  ) {
+    return 'Sesi antrean sudah ditutup atau jadwal praktik tidak aktif.'
+  }
+
+  if (normalized.includes('queue session not found for schedule')) {
+    return 'Sesi antrean untuk jadwal ini belum terbentuk. Coba buat ulang jadwal atau cek data Supabase.'
+  }
+
+  if (normalized.includes('doctor is used by schedules')) {
+    return 'Dokter sudah dipakai pada jadwal praktik. Nonaktifkan dokter bila tidak ingin dipakai lagi, supaya histori jadwal tetap aman.'
+  }
+
+  if (normalized.includes('polyclinic is used by schedules')) {
+    return 'Poli sudah dipakai pada jadwal praktik. Nonaktifkan poli bila tidak ingin dipakai lagi, supaya histori jadwal tetap aman.'
+  }
+
+  if (normalized.includes('schedule already has queue tickets')) {
+    return 'Jadwal sudah memiliki tiket antrean. Ubah status menjadi Batal atau Tutup agar histori pasien tetap aman.'
+  }
+
+  if (normalized.includes('quota cannot be lower')) {
+    return 'Kuota jadwal tidak boleh lebih kecil dari jumlah nomor antrean yang sudah terambil.'
+  }
+
+  if (normalized.includes('end time must be after start time')) {
+    return 'Jam selesai harus lebih besar dari jam mulai.'
+  }
+
+  if (
+    normalized.includes('clinic branch is not active') ||
+    normalized.includes('polyclinic is not active') ||
+    normalized.includes('doctor is not active')
+  ) {
+    return 'Cabang, poli, atau dokter yang dipilih sedang tidak aktif.'
+  }
+
   if (normalized.includes('foreign key')) {
     return 'Data masih terhubung dengan jadwal atau antrean lain. Nonaktifkan data bila tidak ingin dipakai lagi.'
   }

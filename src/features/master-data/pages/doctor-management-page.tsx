@@ -4,12 +4,14 @@ import { useMemo, useState } from 'react'
 import {
   Loader2,
   Pencil,
+  Plus,
   RefreshCw,
   Save,
   Search,
   Stethoscope,
   ToggleLeft,
   ToggleRight,
+  Trash2,
   UsersRound,
 } from 'lucide-react'
 
@@ -18,13 +20,19 @@ import { Button } from '../../../components/ui/button'
 import { Card } from '../../../components/ui/card'
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog'
 import { FeedbackBanner } from '../../../components/ui/feedback-banner'
+import { FormDrawer } from '../../../components/ui/form-drawer'
 import { Input } from '../../../components/ui/input'
 import { PageHeader } from '../../../components/ui/page-header'
+import { Pagination } from '../../../components/ui/pagination'
 import { StatCard } from '../../../components/ui/stat-card'
+import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table-state'
+import { useToast } from '../../../components/ui/use-toast'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
+import { paginateItems } from '../../../lib/pagination'
 import type { Doctor } from '../../../types/queue'
 import {
   createDoctor,
+  deleteDoctor,
   fetchMasterData,
   updateDoctor,
   type DoctorPayload,
@@ -47,6 +55,7 @@ const emptyDoctorDraft: DoctorDraft = {
   license_number: '',
   specialization: '',
 }
+const pageSize = 8
 
 type Notice = {
   text: string
@@ -61,10 +70,14 @@ type PendingDoctorSave = {
 
 export function DoctorManagementPage() {
   const queryClient = useQueryClient()
+  const { notify } = useToast()
   const [draft, setDraft] = useState<DoctorDraft>(emptyDoctorDraft)
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [editingDoctorId, setEditingDoctorId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<Doctor | null>(null)
   const [pendingSave, setPendingSave] = useState<PendingDoctorSave | null>(null)
+  const [page, setPage] = useState(1)
   const [searchTerm, setSearchTerm] = useState('')
   const [activityFilter, setActivityFilter] = useState<
     'active' | 'all' | 'inactive'
@@ -108,6 +121,10 @@ export function DoctorManagementPage() {
       return matchesActivity && searchableText.includes(normalizedSearch)
     })
   }, [activityFilter, doctors, searchTerm])
+  const paginatedDoctors = useMemo(
+    () => paginateItems(filteredDoctors, page, pageSize),
+    [filteredDoctors, page],
+  )
 
   const doctorMutation = useMutation({
     mutationFn: (payload: DoctorPayload) =>
@@ -115,12 +132,14 @@ export function DoctorManagementPage() {
         ? updateDoctor(editingDoctorId, payload)
         : createDoctor(payload),
     onSuccess: async () => {
+      const successMessage = editingDoctorId
+        ? 'Data dokter berhasil diperbarui.'
+        : 'Dokter baru berhasil ditambahkan.'
       setNotice({
-        text: editingDoctorId
-          ? 'Data dokter berhasil diperbarui.'
-          : 'Dokter baru berhasil ditambahkan.',
+        text: successMessage,
         tone: 'success',
       })
+      notify({ message: successMessage, title: 'Berhasil', tone: 'success' })
       setPendingSave(null)
       resetForm()
       await queryClient.invalidateQueries({ queryKey: ['master-data'] })
@@ -129,16 +148,49 @@ export function DoctorManagementPage() {
       await queryClient.invalidateQueries({ queryKey: ['schedules'] })
     },
     onError: (error) => {
+      const message = friendlySupabaseError(error, 'Gagal menyimpan dokter.')
       setNotice({
-        text: friendlySupabaseError(error, 'Gagal menyimpan dokter.'),
+        text: message,
         title: 'Data dokter gagal disimpan',
         tone: 'danger',
       })
+      notify({ message, title: 'Gagal menyimpan', tone: 'danger' })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteDoctor,
+    onSuccess: async () => {
+      const successMessage = 'Data dokter berhasil dihapus.'
+      setNotice({ text: successMessage, tone: 'success' })
+      notify({ message: successMessage, title: 'Berhasil', tone: 'success' })
+      setPendingDelete(null)
+      await queryClient.invalidateQueries({ queryKey: ['master-data'] })
+      await queryClient.invalidateQueries({ queryKey: ['schedule-references'] })
+      await queryClient.invalidateQueries({ queryKey: ['schedule-management'] })
+      await queryClient.invalidateQueries({ queryKey: ['schedules'] })
+    },
+    onError: (error) => {
+      const message = friendlySupabaseError(error, 'Gagal menghapus dokter.')
+      setNotice({
+        text: message,
+        title: 'Data dokter gagal dihapus',
+        tone: 'danger',
+      })
+      notify({ message, title: 'Gagal menghapus', tone: 'danger' })
+      setPendingDelete(null)
     },
   })
 
   function updateDraft(key: keyof DoctorDraft, value: string | boolean) {
     setDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  function startCreate() {
+    setNotice(null)
+    setEditingDoctorId(null)
+    setDraft(emptyDoctorDraft)
+    setIsDrawerOpen(true)
   }
 
   function startEdit(doctor: Doctor) {
@@ -152,12 +204,14 @@ export function DoctorManagementPage() {
       license_number: doctor.license_number ?? '',
       specialization: doctor.specialization ?? '',
     })
+    setIsDrawerOpen(true)
   }
 
   function resetForm() {
     setEditingDoctorId(null)
     setDraft(emptyDoctorDraft)
     setPendingSave(null)
+    setIsDrawerOpen(false)
   }
 
   function submitForm(event: FormEvent<HTMLFormElement>) {
@@ -207,15 +261,21 @@ export function DoctorManagementPage() {
       <div className="space-y-5">
         <PageHeader
           actions={
-            <Button
-              variant="secondary"
-              onClick={() => {
-                void masterDataQuery.refetch()
-              }}
-            >
-              <RefreshCw size={16} />
-              Refresh
-            </Button>
+            <>
+              <Button onClick={startCreate}>
+                <Plus size={16} />
+                Tambah Dokter
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void masterDataQuery.refetch()
+                }}
+              >
+                <RefreshCw size={16} />
+                Refresh
+              </Button>
+            </>
           }
           description="Kelola data dokter, spesialisasi, status aktif, SIP, dan durasi layanan default."
           eyebrow="Master Data"
@@ -246,13 +306,69 @@ export function DoctorManagementPage() {
           />
         </div>
 
-        {notice ? (
+        {notice && !isDrawerOpen ? (
           <FeedbackBanner title={notice.title} tone={notice.tone}>
             {notice.text}
           </FeedbackBanner>
         ) : null}
 
-        <div className="grid gap-5 xl:grid-cols-[430px_1fr]">
+        <Card className="p-5">
+          <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+            <div className="relative">
+              <Search className="absolute left-3 top-3 text-slate-400" size={17} />
+              <Input
+                className="pl-10"
+                placeholder="Cari dokter, SIP, spesialisasi"
+                value={searchTerm}
+                onChange={(event) => {
+                  setSearchTerm(event.target.value)
+                  setPage(1)
+                }}
+              />
+            </div>
+            <select
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
+              value={activityFilter}
+              onChange={(event) => {
+                setActivityFilter(
+                  event.target.value as 'active' | 'all' | 'inactive',
+                )
+                setPage(1)
+              }}
+            >
+              <option value="all">Semua status</option>
+              <option value="active">Aktif</option>
+              <option value="inactive">Nonaktif</option>
+            </select>
+          </div>
+        </Card>
+
+              <DoctorTable
+              currentPage={paginatedDoctors.page}
+              doctors={paginatedDoctors.items}
+              filteredTotal={filteredDoctors.length}
+              loading={masterDataQuery.isLoading}
+              onCreate={startCreate}
+              onDelete={setPendingDelete}
+              onEdit={startEdit}
+              onPageChange={setPage}
+              pageSize={pageSize}
+              total={doctors.length}
+            />
+
+        <FormDrawer
+          description="Simpan identitas dokter, SIP, spesialisasi, durasi layanan, dan status aktif."
+          open={isDrawerOpen}
+          title={editingDoctorId ? 'Edit Dokter' : 'Tambah Dokter'}
+          onClose={resetForm}
+        >
+          {notice ? (
+            <div className="mb-4">
+              <FeedbackBanner title={notice.title} tone={notice.tone}>
+                {notice.text}
+              </FeedbackBanner>
+            </div>
+          ) : null}
           <DoctorForm
             draft={draft}
             editing={Boolean(editingDoctorId)}
@@ -264,43 +380,7 @@ export function DoctorManagementPage() {
             }}
             onSubmit={submitForm}
           />
-
-          <div className="space-y-4">
-            <Card className="p-5">
-              <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
-                <div className="relative">
-                  <Search className="absolute left-3 top-3 text-slate-400" size={17} />
-                  <Input
-                    className="pl-10"
-                    placeholder="Cari dokter, SIP, spesialisasi"
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                  />
-                </div>
-                <select
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
-                  value={activityFilter}
-                  onChange={(event) =>
-                    setActivityFilter(
-                      event.target.value as 'active' | 'all' | 'inactive',
-                    )
-                  }
-                >
-                  <option value="all">Semua status</option>
-                  <option value="active">Aktif</option>
-                  <option value="inactive">Nonaktif</option>
-                </select>
-              </div>
-            </Card>
-
-            <DoctorTable
-              doctors={filteredDoctors}
-              loading={masterDataQuery.isLoading}
-              onEdit={startEdit}
-              total={doctors.length}
-            />
-          </div>
-        </div>
+        </FormDrawer>
         <ConfirmDialog
           confirmLabel="Nonaktifkan"
           description={
@@ -314,6 +394,23 @@ export function DoctorManagementPage() {
           tone="danger"
           onCancel={() => setPendingSave(null)}
           onConfirm={confirmPendingSave}
+        />
+        <ConfirmDialog
+          confirmLabel="Hapus"
+          description={
+            pendingDelete
+              ? `${pendingDelete.full_name} akan dihapus permanen jika belum pernah dipakai pada jadwal praktik. Jika sudah punya histori, sistem akan menolak dan dokter cukup dinonaktifkan.`
+              : 'Data dokter akan dihapus.'
+          }
+          icon={<Trash2 size={20} />}
+          isLoading={deleteMutation.isPending}
+          open={Boolean(pendingDelete)}
+          title="Hapus dokter?"
+          tone="danger"
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            if (pendingDelete) deleteMutation.mutate(pendingDelete.id)
+          }}
         />
       </div>
     </AdminLayout>
@@ -397,19 +494,31 @@ function DoctorForm({
 
 function DoctorTable({
   doctors,
+  currentPage,
+  filteredTotal,
   loading,
+  onCreate,
+  onDelete,
   onEdit,
+  onPageChange,
+  pageSize,
   total,
 }: {
+  currentPage: number
   doctors: Doctor[]
+  filteredTotal: number
   loading: boolean
+  onCreate: () => void
+  onDelete: (doctor: Doctor) => void
   onEdit: (doctor: Doctor) => void
+  onPageChange: (page: number) => void
+  pageSize: number
   total: number
 }) {
   return (
     <Card className="overflow-hidden">
       <TableHeader
-        subtitle={`Menampilkan ${doctors.length} dari ${total} dokter.`}
+        subtitle={`Menampilkan ${filteredTotal} dari ${total} dokter.`}
         title="Daftar Dokter"
       />
       <div className="overflow-x-auto">
@@ -425,9 +534,19 @@ function DoctorTable({
           </thead>
           <tbody className="divide-y divide-slate-100">
             {loading ? (
-              <TableEmpty colSpan={5} text="Memuat dokter..." />
+              <TableSkeletonRows columns={5} />
             ) : doctors.length === 0 ? (
-              <TableEmpty colSpan={5} text="Belum ada dokter." />
+              <TableEmptyState
+                action={
+                  <Button onClick={onCreate}>
+                    <Plus size={16} />
+                    Tambah Dokter
+                  </Button>
+                }
+                colSpan={5}
+                description="Tambahkan dokter agar jadwal praktik bisa dibuat dan muncul di aplikasi pasien."
+                title={total === 0 ? 'Belum ada dokter' : 'Tidak ada dokter yang cocok'}
+              />
             ) : (
               doctors.map((doctor) => (
                 <tr className="transition hover:bg-slate-50/80" key={doctor.id}>
@@ -447,10 +566,14 @@ function DoctorTable({
                     <ActiveBadge active={doctor.is_active} />
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
                       <Button variant="secondary" onClick={() => onEdit(doctor)}>
                         <Pencil size={16} />
                         Edit
+                      </Button>
+                      <Button variant="danger" onClick={() => onDelete(doctor)}>
+                        <Trash2 size={16} />
+                        Hapus
                       </Button>
                     </div>
                   </td>
@@ -460,6 +583,12 @@ function DoctorTable({
           </tbody>
         </table>
       </div>
+      <Pagination
+        currentPage={currentPage}
+        onPageChange={onPageChange}
+        pageSize={pageSize}
+        totalItems={filteredTotal}
+      />
     </Card>
   )
 }
@@ -555,16 +684,6 @@ function TableHeader({ subtitle, title }: { subtitle?: string; title: string }) 
       <h3 className="font-black">{title}</h3>
       {subtitle ? <p className="text-sm text-slate-500">{subtitle}</p> : null}
     </div>
-  )
-}
-
-function TableEmpty({ colSpan, text }: { colSpan: number; text: string }) {
-  return (
-    <tr>
-      <td className="px-4 py-8 text-center text-slate-500" colSpan={colSpan}>
-        {text}
-      </td>
-    </tr>
   )
 }
 

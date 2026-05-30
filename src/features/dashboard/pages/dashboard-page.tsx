@@ -4,6 +4,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
+  ClipboardList,
   RefreshCw,
   Stethoscope,
   UsersRound,
@@ -16,7 +17,9 @@ import { Button, LinkButton } from '../../../components/ui/button'
 import { Card } from '../../../components/ui/card'
 import { PageHeader } from '../../../components/ui/page-header'
 import { StatCard } from '../../../components/ui/stat-card'
+import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table-state'
 import type { QueueStatus, QueueTicketDetail, ScheduleAvailability } from '../../../types/queue'
+import type { QueueEventFeedItem } from '../../../types/queue'
 import { fetchDashboardData } from '../services/dashboard-service'
 
 export function DashboardPage() {
@@ -27,6 +30,7 @@ export function DashboardPage() {
 
   const data = dashboardQuery.data
   const tickets = useMemo(() => data?.tickets ?? [], [data?.tickets])
+  const events = useMemo(() => data?.events ?? [], [data?.events])
   const schedules = useMemo(() => data?.schedules ?? [], [data?.schedules])
 
   const stats = useMemo(() => {
@@ -48,7 +52,13 @@ export function DashboardPage() {
       activeSchedules: schedules.filter((schedule) => schedule.status === 'open').length,
       activeTickets: activeTickets.length,
       avgWait,
+      completionRate:
+        tickets.length === 0 ? 0 : Math.round((completed.length / tickets.length) * 100),
       completed: completed.length,
+      totalCapacity: schedules.reduce(
+        (total, schedule) => total + schedule.quota_limit,
+        0,
+      ),
       totalTickets: tickets.length,
     }
   }, [schedules, tickets])
@@ -68,6 +78,11 @@ export function DashboardPage() {
 
   const recentTickets = tickets.slice(0, 6)
   const upcomingSchedules = schedules.slice(0, 5)
+  const capacityUsage =
+    stats.totalCapacity === 0
+      ? 0
+      : Math.round((stats.totalTickets / stats.totalCapacity) * 100)
+  const activityItems = events.slice(0, 5)
 
   return (
     <AdminLayout>
@@ -150,6 +165,24 @@ export function DashboardPage() {
           </div>
         </Card>
 
+        <div className="grid gap-3 md:grid-cols-3">
+          <InsightCard
+            helper={`${stats.completed} dari ${stats.totalTickets} tiket hari ini`}
+            label="Completion Rate"
+            value={`${stats.completionRate}%`}
+          />
+          <InsightCard
+            helper={`${stats.totalTickets} dari ${stats.totalCapacity} kuota terpakai`}
+            label="Pemakaian Kapasitas"
+            value={`${capacityUsage}%`}
+          />
+          <InsightCard
+            helper="Berbasis estimasi tiket aktif dan selesai"
+            label="Rata-rata Tunggu"
+            value={`${stats.avgWait} menit`}
+          />
+        </div>
+
         <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
           <Card className="overflow-hidden">
             <div className="border-b border-slate-200 px-4 py-3">
@@ -173,9 +206,13 @@ export function DashboardPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {dashboardQuery.isLoading ? (
-                    <EmptyRow colSpan={5} text="Memuat antrean..." />
+                    <TableSkeletonRows columns={5} />
                   ) : recentTickets.length === 0 ? (
-                    <EmptyRow colSpan={5} text="Belum ada antrean hari ini." />
+                    <TableEmptyState
+                      colSpan={5}
+                      description="Antrean akan muncul otomatis saat pasien mengambil nomor dari aplikasi."
+                      title="Belum ada antrean hari ini"
+                    />
                   ) : (
                     recentTickets.map((ticket) => (
                       <tr className="transition hover:bg-slate-50/80" key={ticket.ticket_id}>
@@ -205,6 +242,31 @@ export function DashboardPage() {
           </Card>
 
           <div className="space-y-5">
+            <Card className="p-4">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="font-black">Aktivitas Terbaru</h3>
+                <ClipboardList className="text-teal-600" size={20} />
+              </div>
+              <div className="space-y-3">
+                {dashboardQuery.isLoading ? (
+                  Array.from({ length: 4 }).map((_, index) => (
+                    <div
+                      className="h-12 animate-pulse rounded-xl bg-slate-100"
+                      key={index}
+                    />
+                  ))
+                ) : activityItems.length === 0 ? (
+                  <p className="text-sm leading-6 text-slate-500">
+                    Belum ada aktivitas antrean hari ini.
+                  </p>
+                ) : (
+                  activityItems.map((event) => (
+                    <ActivityItem event={event} key={event.event_id} />
+                  ))
+                )}
+              </div>
+            </Card>
+
             <Card className="p-4">
               <div className="mb-4 flex items-center justify-between">
                 <h3 className="font-black">Kesiapan Data</h3>
@@ -265,8 +327,13 @@ export function DashboardPage() {
           </div>
           <div className="grid gap-0 divide-y divide-slate-100">
             {dashboardQuery.isLoading ? (
-              <div className="px-4 py-8 text-center text-sm text-slate-500">
-                Memuat jadwal...
+              <div className="grid gap-2 p-4">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div
+                    className="h-16 animate-pulse rounded-xl bg-slate-100"
+                    key={index}
+                  />
+                ))}
               </div>
             ) : upcomingSchedules.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-slate-500">
@@ -313,22 +380,53 @@ function LiveTile({ label, value }: { label: string; value: number | string }) {
   )
 }
 
+function InsightCard({
+  helper,
+  label,
+  value,
+}: {
+  helper: string
+  label: string
+  value: string
+}) {
+  return (
+    <Card className="p-4">
+      <p className="text-sm font-bold text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-black text-slate-950">{value}</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+        {helper}
+      </p>
+    </Card>
+  )
+}
+
+function ActivityItem({ event }: { event: QueueEventFeedItem }) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-black text-slate-900">{event.queue_code}</p>
+        <StatusBadge status={event.new_status} />
+      </div>
+      <p className="mt-1 text-sm font-semibold text-slate-600">
+        {event.patient_name} - {event.polyclinic_name}
+      </p>
+      <p className="mt-1 text-xs font-semibold text-slate-500">
+        {event.message ?? 'Status antrean diperbarui'} ·{' '}
+        {new Date(event.created_at).toLocaleTimeString('id-ID', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}
+      </p>
+    </div>
+  )
+}
+
 function ReadinessRow({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
       <span className="text-sm font-bold text-slate-600">{label}</span>
       <span className="text-lg font-black text-slate-950">{value}</span>
     </div>
-  )
-}
-
-function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
-  return (
-    <tr>
-      <td className="px-4 py-8 text-center text-slate-500" colSpan={colSpan}>
-        {text}
-      </td>
-    </tr>
   )
 }
 
