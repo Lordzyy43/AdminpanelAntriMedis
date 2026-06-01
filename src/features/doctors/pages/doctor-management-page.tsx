@@ -2,16 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { FormEvent, ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import {
-  Building2,
   Loader2,
   Pencil,
   Plus,
   RefreshCw,
   Save,
   Search,
+  Stethoscope,
   ToggleLeft,
   ToggleRight,
   Trash2,
+  UsersRound,
 } from 'lucide-react'
 
 import { AdminLayout } from '../../../components/layout/admin-layout'
@@ -28,31 +29,31 @@ import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table
 import { useToast } from '../../../components/ui/use-toast'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
 import { paginateItems } from '../../../lib/pagination'
-import type { ClinicBranch, Polyclinic } from '../../../types/queue'
+import type { Doctor } from '../../../types/queue'
 import {
-  createPolyclinic,
-  deletePolyclinic,
-  fetchMasterData,
-  updatePolyclinic,
-  type PolyclinicPayload,
-} from '../services/master-data-service'
+  createDoctor,
+  deleteDoctor,
+  fetchDoctors,
+  updateDoctor,
+  type DoctorPayload,
+} from '../services/doctor-service'
 
-type PolyclinicDraft = {
-  branch_id: string
-  code: string
-  description: string
+type DoctorDraft = {
+  bio: string
+  default_service_minutes: string
+  full_name: string
   is_active: boolean
-  name: string
-  queue_prefix: string
+  license_number: string
+  specialization: string
 }
 
-const emptyPolyclinicDraft: PolyclinicDraft = {
-  branch_id: '',
-  code: '',
-  description: '',
+const emptyDoctorDraft: DoctorDraft = {
+  bio: '',
+  default_service_minutes: '10',
+  full_name: '',
   is_active: true,
-  name: '',
-  queue_prefix: '',
+  license_number: '',
+  specialization: '',
 }
 const pageSize = 8
 
@@ -62,91 +63,78 @@ type Notice = {
   tone: 'danger' | 'info' | 'success' | 'warning'
 }
 
-type PendingPolyclinicSave = {
-  payload: PolyclinicPayload
-  polyclinic: Polyclinic | null
+type PendingDoctorSave = {
+  doctor: Doctor | null
+  payload: DoctorPayload
 }
 
-export function PolyclinicManagementPage() {
+export function DoctorManagementPage() {
   const queryClient = useQueryClient()
   const { notify } = useToast()
-  const [draft, setDraft] = useState<PolyclinicDraft>(emptyPolyclinicDraft)
+  const [draft, setDraft] = useState<DoctorDraft>(emptyDoctorDraft)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
-  const [editingPolyclinicId, setEditingPolyclinicId] = useState<string | null>(
-    null,
-  )
+  const [editingDoctorId, setEditingDoctorId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<Doctor | null>(null)
+  const [pendingSave, setPendingSave] = useState<PendingDoctorSave | null>(null)
   const [page, setPage] = useState(1)
-  const [pendingDelete, setPendingDelete] = useState<Polyclinic | null>(null)
-  const [pendingSave, setPendingSave] = useState<PendingPolyclinicSave | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [activityFilter, setActivityFilter] = useState<
     'active' | 'all' | 'inactive'
   >('all')
 
   const masterDataQuery = useQuery({
-    queryKey: ['master-data'],
-    queryFn: fetchMasterData,
+    queryKey: ['doctors'],
+    queryFn: fetchDoctors,
   })
 
-  const branches = useMemo(
-    () => masterDataQuery.data?.branches ?? [],
-    [masterDataQuery.data?.branches],
-  )
-  const polyclinics = useMemo(
-    () => masterDataQuery.data?.polyclinics ?? [],
-    [masterDataQuery.data?.polyclinics],
-  )
-  const branchNameById = useMemo(
-    () => new Map(branches.map((branch) => [branch.id, branch.name])),
-    [branches],
+  const doctors = useMemo(
+    () => masterDataQuery.data ?? [],
+    [masterDataQuery.data],
   )
 
   const stats = useMemo(
     () => ({
-      active: polyclinics.filter((polyclinic) => polyclinic.is_active).length,
-      inactive: polyclinics.filter((polyclinic) => !polyclinic.is_active).length,
-      total: polyclinics.length,
+      active: doctors.filter((doctor) => doctor.is_active).length,
+      inactive: doctors.filter((doctor) => !doctor.is_active).length,
+      total: doctors.length,
     }),
-    [polyclinics],
+    [doctors],
   )
 
-  const filteredPolyclinics = useMemo(() => {
+  const filteredDoctors = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase()
 
-    return polyclinics.filter((polyclinic) => {
+    return doctors.filter((doctor) => {
       const matchesActivity =
         activityFilter === 'all' ||
-        (activityFilter === 'active'
-          ? polyclinic.is_active
-          : !polyclinic.is_active)
+        (activityFilter === 'active' ? doctor.is_active : !doctor.is_active)
       const searchableText = [
-        polyclinic.name,
-        polyclinic.code,
-        polyclinic.queue_prefix,
-        polyclinic.description ?? '',
-        branchNameById.get(polyclinic.branch_id) ?? '',
+        doctor.full_name,
+        doctor.license_number ?? '',
+        doctor.specialization ?? '',
+        doctor.bio ?? '',
       ]
         .join(' ')
         .toLowerCase()
 
       return matchesActivity && searchableText.includes(normalizedSearch)
     })
-  }, [activityFilter, branchNameById, polyclinics, searchTerm])
-  const paginatedPolyclinics = useMemo(
-    () => paginateItems(filteredPolyclinics, page, pageSize),
-    [filteredPolyclinics, page],
+  }, [activityFilter, doctors, searchTerm])
+  const paginatedDoctors = useMemo(
+    () => paginateItems(filteredDoctors, page, pageSize),
+    [filteredDoctors, page],
   )
 
-  const polyclinicMutation = useMutation({
-    mutationFn: (payload: PolyclinicPayload) =>
-      editingPolyclinicId
-        ? updatePolyclinic(editingPolyclinicId, payload)
-        : createPolyclinic(payload),
+  const doctorMutation = useMutation({
+    mutationFn: (payload: DoctorPayload) =>
+      editingDoctorId
+        ? updateDoctor(editingDoctorId, payload)
+        : createDoctor(payload),
     onSuccess: async () => {
-      const successMessage = editingPolyclinicId
-        ? 'Data poli berhasil diperbarui.'
-        : 'Poli baru berhasil ditambahkan.'
+      const successMessage = editingDoctorId
+        ? 'Data dokter berhasil diperbarui.'
+        : 'Dokter baru berhasil ditambahkan.'
       setNotice({
         text: successMessage,
         tone: 'success',
@@ -154,16 +142,16 @@ export function PolyclinicManagementPage() {
       notify({ message: successMessage, title: 'Berhasil', tone: 'success' })
       setPendingSave(null)
       resetForm()
-      await queryClient.invalidateQueries({ queryKey: ['master-data'] })
+      await queryClient.invalidateQueries({ queryKey: ['doctors'] })
       await queryClient.invalidateQueries({ queryKey: ['schedule-references'] })
       await queryClient.invalidateQueries({ queryKey: ['schedule-management'] })
       await queryClient.invalidateQueries({ queryKey: ['schedules'] })
     },
     onError: (error) => {
-      const message = friendlySupabaseError(error, 'Gagal menyimpan poli.')
+      const message = friendlySupabaseError(error, 'Gagal menyimpan dokter.')
       setNotice({
         text: message,
-        title: 'Data poli gagal disimpan',
+        title: 'Data dokter gagal disimpan',
         tone: 'danger',
       })
       notify({ message, title: 'Gagal menyimpan', tone: 'danger' })
@@ -171,22 +159,25 @@ export function PolyclinicManagementPage() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: deletePolyclinic,
-    onSuccess: async () => {
-      const successMessage = 'Data poli berhasil dihapus.'
+    mutationFn: deleteDoctor,
+    onSuccess: async (result) => {
+      const successMessage =
+        result === 'archived'
+          ? 'Dokter sudah dipakai pada histori jadwal, jadi data berhasil diarsipkan sebagai nonaktif.'
+          : 'Data dokter berhasil dihapus.'
       setNotice({ text: successMessage, tone: 'success' })
       notify({ message: successMessage, title: 'Berhasil', tone: 'success' })
       setPendingDelete(null)
-      await queryClient.invalidateQueries({ queryKey: ['master-data'] })
+      await queryClient.invalidateQueries({ queryKey: ['doctors'] })
       await queryClient.invalidateQueries({ queryKey: ['schedule-references'] })
       await queryClient.invalidateQueries({ queryKey: ['schedule-management'] })
       await queryClient.invalidateQueries({ queryKey: ['schedules'] })
     },
     onError: (error) => {
-      const message = friendlySupabaseError(error, 'Gagal menghapus poli.')
+      const message = friendlySupabaseError(error, 'Gagal menghapus dokter.')
       setNotice({
         text: message,
-        title: 'Data poli gagal dihapus',
+        title: 'Data dokter gagal dihapus',
         tone: 'danger',
       })
       notify({ message, title: 'Gagal menghapus', tone: 'danger' })
@@ -194,43 +185,34 @@ export function PolyclinicManagementPage() {
     },
   })
 
-  function updateDraft(key: keyof PolyclinicDraft, value: string | boolean) {
-    setDraft((current) => ({
-      ...current,
-      [key]:
-        (key === 'queue_prefix' || key === 'code') && typeof value === 'string'
-          ? value.toUpperCase()
-          : value,
-    }))
+  function updateDraft(key: keyof DoctorDraft, value: string | boolean) {
+    setDraft((current) => ({ ...current, [key]: value }))
   }
 
   function startCreate() {
     setNotice(null)
-    setEditingPolyclinicId(null)
-    setDraft({
-      ...emptyPolyclinicDraft,
-      branch_id: branches[0]?.id ?? '',
-    })
+    setEditingDoctorId(null)
+    setDraft(emptyDoctorDraft)
     setIsDrawerOpen(true)
   }
 
-  function startEdit(polyclinic: Polyclinic) {
+  function startEdit(doctor: Doctor) {
     setNotice(null)
-    setEditingPolyclinicId(polyclinic.id)
+    setEditingDoctorId(doctor.id)
     setDraft({
-      branch_id: polyclinic.branch_id,
-      code: polyclinic.code,
-      description: polyclinic.description ?? '',
-      is_active: polyclinic.is_active,
-      name: polyclinic.name,
-      queue_prefix: polyclinic.queue_prefix,
+      bio: doctor.bio ?? '',
+      default_service_minutes: String(doctor.default_service_minutes),
+      full_name: doctor.full_name,
+      is_active: doctor.is_active,
+      license_number: doctor.license_number ?? '',
+      specialization: doctor.specialization ?? '',
     })
     setIsDrawerOpen(true)
   }
 
   function resetForm() {
-    setEditingPolyclinicId(null)
-    setDraft(emptyPolyclinicDraft)
+    setEditingDoctorId(null)
+    setDraft(emptyDoctorDraft)
     setPendingSave(null)
     setIsDrawerOpen(false)
   }
@@ -239,50 +221,42 @@ export function PolyclinicManagementPage() {
     event.preventDefault()
     setNotice(null)
 
-    const payload: PolyclinicPayload = {
-      branch_id: draft.branch_id,
-      code: draft.code.trim().toUpperCase(),
-      description: draft.description.trim() || null,
+    const payload: DoctorPayload = {
+      bio: draft.bio.trim() || null,
+      default_service_minutes: Number(draft.default_service_minutes),
+      full_name: draft.full_name.trim(),
       is_active: draft.is_active,
-      name: draft.name.trim(),
-      queue_prefix: draft.queue_prefix.trim().toUpperCase(),
+      license_number: draft.license_number.trim() || null,
+      specialization: draft.specialization.trim() || null,
     }
 
-    if (!payload.branch_id || !payload.name || !payload.code || !payload.queue_prefix) {
+    if (!payload.full_name) {
+      setNotice({ text: 'Nama dokter wajib diisi.', tone: 'warning' })
+      return
+    }
+
+    if (payload.default_service_minutes < 1) {
       setNotice({
-        text: 'Cabang, nama poli, kode, dan prefix antrean wajib diisi.',
+        text: 'Durasi layanan default minimal 1 menit.',
         tone: 'warning',
       })
       return
     }
 
-    if (payload.queue_prefix.length > 3) {
-      setNotice({
-        text: 'Prefix antrean sebaiknya maksimal 3 karakter.',
-        tone: 'warning',
-      })
+    const currentDoctor =
+      doctors.find((doctor) => doctor.id === editingDoctorId) ?? null
+
+    if (editingDoctorId && currentDoctor?.is_active && !payload.is_active) {
+      setPendingSave({ doctor: currentDoctor, payload })
       return
     }
 
-    const currentPolyclinic =
-      polyclinics.find((polyclinic) => polyclinic.id === editingPolyclinicId) ??
-      null
-
-    if (
-      editingPolyclinicId &&
-      currentPolyclinic?.is_active &&
-      !payload.is_active
-    ) {
-      setPendingSave({ payload, polyclinic: currentPolyclinic })
-      return
-    }
-
-    polyclinicMutation.mutate(payload)
+    doctorMutation.mutate(payload)
   }
 
   function confirmPendingSave() {
     if (!pendingSave) return
-    polyclinicMutation.mutate(pendingSave.payload)
+    doctorMutation.mutate(pendingSave.payload)
   }
 
   return (
@@ -293,7 +267,7 @@ export function PolyclinicManagementPage() {
             <>
               <Button onClick={startCreate}>
                 <Plus size={16} />
-                Tambah Poli
+                Tambah Dokter
               </Button>
               <Button
                 variant="secondary"
@@ -306,28 +280,28 @@ export function PolyclinicManagementPage() {
               </Button>
             </>
           }
-          description="Kelola poli, prefix nomor antrean, cabang, dan status aktif layanan."
+          description="Kelola data dokter, spesialisasi, status aktif, SIP, dan durasi layanan default."
           eyebrow="Master Data"
-          title="Manajemen Poli"
+          title="Manajemen Dokter"
         />
 
         <div className="grid gap-3 md:grid-cols-3">
           <StatCard
-            helper="Seluruh poli"
-            icon={<Building2 size={20} />}
-            label="Total Poli"
+            helper="Seluruh dokter"
+            icon={<UsersRound size={20} />}
+            label="Total Dokter"
             tone="teal"
             value={stats.total}
           />
           <StatCard
-            helper="Bisa dipakai di jadwal"
+            helper="Bisa dipilih di jadwal"
             icon={<ToggleRight size={22} />}
             label="Aktif"
             tone="emerald"
             value={stats.active}
           />
           <StatCard
-            helper="Disimpan nonaktif"
+            helper="Tidak tampil di jadwal baru"
             icon={<ToggleLeft size={22} />}
             label="Nonaktif"
             tone="slate"
@@ -347,7 +321,7 @@ export function PolyclinicManagementPage() {
               <Search className="absolute left-3 top-3 text-slate-400" size={17} />
               <Input
                 className="pl-10"
-                placeholder="Cari poli, kode, prefix, cabang"
+                placeholder="Cari dokter, SIP, spesialisasi"
                 value={searchTerm}
                 onChange={(event) => {
                   setSearchTerm(event.target.value)
@@ -372,24 +346,23 @@ export function PolyclinicManagementPage() {
           </div>
         </Card>
 
-        <PolyclinicTable
-          branchNameById={branchNameById}
-          currentPage={paginatedPolyclinics.page}
-          filteredTotal={filteredPolyclinics.length}
-          loading={masterDataQuery.isLoading}
-          onCreate={startCreate}
-          onDelete={setPendingDelete}
-          onEdit={startEdit}
-          onPageChange={setPage}
-          pageSize={pageSize}
-          polyclinics={paginatedPolyclinics.items}
-          total={polyclinics.length}
-        />
+              <DoctorTable
+              currentPage={paginatedDoctors.page}
+              doctors={paginatedDoctors.items}
+              filteredTotal={filteredDoctors.length}
+              loading={masterDataQuery.isLoading}
+              onCreate={startCreate}
+              onDelete={setPendingDelete}
+              onEdit={startEdit}
+              onPageChange={setPage}
+              pageSize={pageSize}
+              total={doctors.length}
+            />
 
         <FormDrawer
-          description="Atur nama layanan, kode internal, prefix nomor antrean, dan status poli."
+          description="Simpan identitas dokter, SIP, spesialisasi, durasi layanan, dan status aktif."
           open={isDrawerOpen}
-          title={editingPolyclinicId ? 'Edit Poli' : 'Tambah Poli'}
+          title={editingDoctorId ? 'Edit Dokter' : 'Tambah Dokter'}
           onClose={resetForm}
         >
           {notice ? (
@@ -399,11 +372,10 @@ export function PolyclinicManagementPage() {
               </FeedbackBanner>
             </div>
           ) : null}
-          <PolyclinicForm
-            branches={branches}
+          <DoctorForm
             draft={draft}
-            editing={Boolean(editingPolyclinicId)}
-            loading={polyclinicMutation.isPending}
+            editing={Boolean(editingDoctorId)}
+            loading={doctorMutation.isPending}
             onChange={updateDraft}
             onReset={() => {
               setNotice(null)
@@ -415,13 +387,13 @@ export function PolyclinicManagementPage() {
         <ConfirmDialog
           confirmLabel="Nonaktifkan"
           description={
-            pendingSave?.polyclinic
-              ? `${pendingSave.polyclinic.name} tidak akan dipakai untuk jadwal baru. Jadwal lama dan antrean historis tetap tersimpan.`
-              : 'Poli akan disimpan sebagai nonaktif.'
+            pendingSave?.doctor
+              ? `${pendingSave.doctor.full_name} tidak akan muncul sebagai pilihan utama saat admin membuat jadwal baru. Jadwal lama tetap tersimpan.`
+              : 'Dokter akan disimpan sebagai nonaktif.'
           }
-          isLoading={polyclinicMutation.isPending}
+          isLoading={doctorMutation.isPending}
           open={Boolean(pendingSave)}
-          title="Nonaktifkan poli?"
+          title="Nonaktifkan dokter?"
           tone="danger"
           onCancel={() => setPendingSave(null)}
           onConfirm={confirmPendingSave}
@@ -430,13 +402,13 @@ export function PolyclinicManagementPage() {
           confirmLabel="Hapus"
           description={
             pendingDelete
-              ? `${pendingDelete.name} akan dihapus permanen jika belum pernah dipakai pada jadwal praktik. Jika sudah punya histori, sistem akan menolak dan poli cukup dinonaktifkan.`
-              : 'Data poli akan dihapus.'
+              ? `${pendingDelete.full_name} akan dihapus permanen jika belum pernah dipakai pada jadwal praktik. Jika sudah punya histori, sistem akan mengarsipkan sebagai nonaktif agar riwayat jadwal tetap aman.`
+              : 'Data dokter akan dihapus atau diarsipkan.'
           }
           icon={<Trash2 size={20} />}
           isLoading={deleteMutation.isPending}
           open={Boolean(pendingDelete)}
-          title="Hapus poli?"
+          title="Hapus atau arsipkan dokter?"
           tone="danger"
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => {
@@ -448,8 +420,7 @@ export function PolyclinicManagementPage() {
   )
 }
 
-function PolyclinicForm({
-  branches,
+function DoctorForm({
   draft,
   editing,
   loading,
@@ -457,71 +428,65 @@ function PolyclinicForm({
   onReset,
   onSubmit,
 }: {
-  branches: ClinicBranch[]
-  draft: PolyclinicDraft
+  draft: DoctorDraft
   editing: boolean
   loading: boolean
-  onChange: (key: keyof PolyclinicDraft, value: string | boolean) => void
+  onChange: (key: keyof DoctorDraft, value: string | boolean) => void
   onReset: () => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }) {
   return (
     <Card className="p-5">
       <FormHeader
-        icon={<Building2 size={21} />}
-        subtitle="Prefix dipakai sebagai kode depan nomor antrean pasien."
-        title={editing ? 'Edit Poli' : 'Tambah Poli'}
+        icon={<Stethoscope size={21} />}
+        subtitle="Durasi default membantu pengisian jadwal praktik."
+        title={editing ? 'Edit Dokter' : 'Tambah Dokter'}
       />
       <form className="space-y-4" onSubmit={onSubmit}>
-        <Field label="Cabang">
-          <select
-            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
-            value={draft.branch_id}
-            onChange={(event) => onChange('branch_id', event.target.value)}
-          >
-            <option value="">Pilih cabang</option>
-            {branches.map((branch) => (
-              <option key={branch.id} value={branch.id}>
-                {branch.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Nama poli">
+        <Field label="Nama dokter">
           <Input
-            placeholder="Poli Umum"
-            value={draft.name}
-            onChange={(event) => onChange('name', event.target.value)}
+            placeholder="Dr. Nama Dokter"
+            value={draft.full_name}
+            onChange={(event) => onChange('full_name', event.target.value)}
           />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Kode">
+          <Field label="Nomor SIP">
             <Input
-              placeholder="UMUM"
-              value={draft.code}
-              onChange={(event) => onChange('code', event.target.value)}
+              placeholder="SIP-001"
+              value={draft.license_number}
+              onChange={(event) => onChange('license_number', event.target.value)}
             />
           </Field>
-          <Field label="Prefix antrean">
+          <Field label="Spesialisasi">
             <Input
-              maxLength={3}
-              placeholder="U"
-              value={draft.queue_prefix}
-              onChange={(event) => onChange('queue_prefix', event.target.value)}
+              placeholder="Dokter Umum"
+              value={draft.specialization}
+              onChange={(event) => onChange('specialization', event.target.value)}
             />
           </Field>
         </div>
-        <Field label="Deskripsi">
+        <Field label="Durasi default">
+          <Input
+            min={1}
+            type="number"
+            value={draft.default_service_minutes}
+            onChange={(event) =>
+              onChange('default_service_minutes', event.target.value)
+            }
+          />
+        </Field>
+        <Field label="Catatan profil">
           <textarea
             className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
-            placeholder="Deskripsi layanan poli"
-            value={draft.description}
-            onChange={(event) => onChange('description', event.target.value)}
+            placeholder="Ringkasan layanan dokter"
+            value={draft.bio}
+            onChange={(event) => onChange('bio', event.target.value)}
           />
         </Field>
         <ToggleField
           active={draft.is_active}
-          label="Status poli"
+          label="Status dokter"
           onChange={(value) => onChange('is_active', value)}
         />
         <FormActions editing={editing} loading={loading} onReset={onReset} />
@@ -530,8 +495,8 @@ function PolyclinicForm({
   )
 }
 
-function PolyclinicTable({
-  branchNameById,
+function DoctorTable({
+  doctors,
   currentPage,
   filteredTotal,
   loading,
@@ -540,34 +505,32 @@ function PolyclinicTable({
   onEdit,
   onPageChange,
   pageSize,
-  polyclinics,
   total,
 }: {
-  branchNameById: Map<string, string>
   currentPage: number
+  doctors: Doctor[]
   filteredTotal: number
   loading: boolean
   onCreate: () => void
-  onDelete: (polyclinic: Polyclinic) => void
-  onEdit: (polyclinic: Polyclinic) => void
+  onDelete: (doctor: Doctor) => void
+  onEdit: (doctor: Doctor) => void
   onPageChange: (page: number) => void
   pageSize: number
-  polyclinics: Polyclinic[]
   total: number
 }) {
   return (
     <Card className="overflow-hidden">
       <TableHeader
-        subtitle={`Menampilkan ${filteredTotal} dari ${total} poli.`}
-        title="Daftar Poli"
+        subtitle={`Menampilkan ${filteredTotal} dari ${total} dokter.`}
+        title="Daftar Dokter"
       />
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase text-slate-500">
             <tr>
-              <th className="px-4 py-3">Poli</th>
-              <th className="px-4 py-3">Cabang</th>
-              <th className="px-4 py-3">Kode</th>
+              <th className="px-4 py-3">Dokter</th>
+              <th className="px-4 py-3">SIP</th>
+              <th className="px-4 py-3">Durasi</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3 text-right">Aksi</th>
             </tr>
@@ -575,51 +538,43 @@ function PolyclinicTable({
           <tbody className="divide-y divide-slate-100">
             {loading ? (
               <TableSkeletonRows columns={5} />
-            ) : polyclinics.length === 0 ? (
+            ) : doctors.length === 0 ? (
               <TableEmptyState
                 action={
                   <Button onClick={onCreate}>
                     <Plus size={16} />
-                    Tambah Poli
+                    Tambah Dokter
                   </Button>
                 }
                 colSpan={5}
-                description="Tambahkan poli agar admin bisa membuat jadwal dan pasien bisa memilih layanan."
-                title={total === 0 ? 'Belum ada poli' : 'Tidak ada poli yang cocok'}
+                description="Tambahkan dokter agar jadwal praktik bisa dibuat dan muncul di aplikasi pasien."
+                title={total === 0 ? 'Belum ada dokter' : 'Tidak ada dokter yang cocok'}
               />
             ) : (
-              polyclinics.map((polyclinic) => (
-                <tr className="transition hover:bg-slate-50/80" key={polyclinic.id}>
+              doctors.map((doctor) => (
+                <tr className="transition hover:bg-slate-50/80" key={doctor.id}>
                   <td className="px-4 py-3">
-                    <p className="font-bold text-slate-900">{polyclinic.name}</p>
+                    <p className="font-bold text-slate-900">{doctor.full_name}</p>
                     <p className="text-xs text-slate-500">
-                      {polyclinic.description ?? 'Belum ada deskripsi'}
+                      {doctor.specialization ?? 'Belum ada spesialisasi'}
                     </p>
                   </td>
                   <td className="px-4 py-3 font-bold">
-                    {branchNameById.get(polyclinic.branch_id) ?? '-'}
+                    {doctor.license_number ?? '-'}
+                  </td>
+                  <td className="px-4 py-3 font-bold">
+                    {doctor.default_service_minutes} menit
                   </td>
                   <td className="px-4 py-3">
-                    <span className="rounded-xl bg-teal-50 px-3 py-1 font-black text-teal-700">
-                      {polyclinic.queue_prefix}
-                    </span>
-                    <span className="ml-2 font-bold text-slate-600">
-                      {polyclinic.code}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <ActiveBadge active={polyclinic.is_active} />
+                    <ActiveBadge active={doctor.is_active} />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
-                      <Button variant="secondary" onClick={() => onEdit(polyclinic)}>
+                      <Button variant="secondary" onClick={() => onEdit(doctor)}>
                         <Pencil size={16} />
                         Edit
                       </Button>
-                      <Button
-                        variant="danger"
-                        onClick={() => onDelete(polyclinic)}
-                      >
+                      <Button variant="danger" onClick={() => onDelete(doctor)}>
                         <Trash2 size={16} />
                         Hapus
                       </Button>

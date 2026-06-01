@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Clock3,
   Eye,
+  FilterX,
   Loader2,
   Megaphone,
   OctagonX,
@@ -13,6 +14,7 @@ import {
   Stethoscope,
   UsersRound,
 } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { AdminLayout } from '../../../components/layout/admin-layout'
@@ -40,6 +42,7 @@ import {
 
 const activeStatuses = ['waiting', 'called', 'serving'] as const
 const pageSize = 8
+const today = toDateInputValue(new Date())
 const queueStatusOptions: Array<{ label: string; value: QueueStatus | 'all' }> = [
   { label: 'Semua status', value: 'all' },
   { label: 'Menunggu', value: 'waiting' },
@@ -71,18 +74,45 @@ export function QueueManagementPage() {
   const [detailTicket, setDetailTicket] = useState<QueueTicketDetail | null>(null)
   const [page, setPage] = useState(1)
   const [pendingAction, setPendingAction] = useState<PendingQueueAction | null>(null)
+  const [polyclinicFilter, setPolyclinicFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<QueueStatus | 'all'>('all')
 
   const schedulesQuery = useQuery({
-    queryKey: ['schedules'],
-    queryFn: fetchSchedules,
+    queryKey: ['schedules', today],
+    queryFn: () => fetchSchedules(today),
   })
 
   const schedules = useMemo(() => schedulesQuery.data ?? [], [schedulesQuery.data])
-  const activeSessionId = selectedSessionId ?? schedules[0]?.queue_session_id ?? null
+  const polyclinicOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          schedules.map((schedule) => [
+            schedule.polyclinic_id,
+            schedule.polyclinic_name,
+          ]),
+        ),
+      ),
+    [schedules],
+  )
+  const filteredSchedules = useMemo(
+    () =>
+      schedules.filter((schedule) => {
+        const matchesPolyclinic =
+          polyclinicFilter === 'all' || schedule.polyclinic_id === polyclinicFilter
 
-  const selectedSchedule = schedules.find(
+        return matchesPolyclinic
+      }),
+    [polyclinicFilter, schedules],
+  )
+  const activeSessionId =
+    selectedSessionId &&
+    filteredSchedules.some((schedule) => schedule.queue_session_id === selectedSessionId)
+      ? selectedSessionId
+      : filteredSchedules[0]?.queue_session_id ?? null
+
+  const selectedSchedule = filteredSchedules.find(
     (schedule) => schedule.queue_session_id === activeSessionId,
   )
 
@@ -153,6 +183,9 @@ export function QueueManagementPage() {
   }, [tickets])
   const hasUnresolvedCall = tickets.some((ticket) =>
     ticket.status === 'called' || ticket.status === 'serving',
+  )
+  const currentTicket = tickets.find(
+    (ticket) => ticket.status === 'called' || ticket.status === 'serving',
   )
 
   const callNextMutation = useMutation({
@@ -274,6 +307,35 @@ export function QueueManagementPage() {
           </FeedbackBanner>
         ) : null}
 
+        <Card className="p-4">
+          <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+            <div>
+              <h3 className="font-black text-slate-950">Kontrol Operasional</h3>
+              <p className="text-sm text-slate-500">
+                {filteredSchedules.length} sesi buka untuk pelayanan hari ini, {formatDateLabel(today)}.
+                {currentTicket
+                  ? ` Nomor ${currentTicket.queue_code} sedang ${currentTicket.status === 'serving' ? 'dilayani' : 'dipanggil'}.`
+                  : ' Tidak ada nomor yang sedang dipanggil.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setPolyclinicFilter('all')
+                  setSearchTerm('')
+                  setStatusFilter('all')
+                  setSelectedSessionId(null)
+                  setPage(1)
+                }}
+              >
+                <FilterX size={16} />
+                Reset
+              </Button>
+            </div>
+          </div>
+        </Card>
+
         <div className="grid gap-3 md:grid-cols-4">
           <StatCard
             helper="Semua tiket di sesi ini"
@@ -306,36 +368,55 @@ export function QueueManagementPage() {
         </div>
 
         <Card className="overflow-hidden">
-          <div className="grid gap-4 p-4 lg:grid-cols-[1fr_360px] lg:items-center">
+          <div className="grid gap-4 p-4 xl:grid-cols-[1fr_360px] xl:items-center">
             <div>
               <p className="text-sm font-black uppercase tracking-wide text-teal-700">
                 Sesi Aktif
               </p>
-              <label className="mt-2 block text-sm font-bold text-slate-700">
-                Jadwal / Poli
-              </label>
-              <select
-                className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
-                value={activeSessionId ?? ''}
-                onChange={(event) => {
-                  setSelectedSessionId(event.target.value || null)
-                  setPage(1)
-                }}
-              >
-                {schedules.length === 0 ? (
-                  <option value="">Belum ada jadwal aktif</option>
-                ) : null}
-                {schedules.map((schedule) => (
-                  <option
-                    key={schedule.schedule_id}
-                    value={schedule.queue_session_id ?? ''}
+              <div className="mt-3 grid gap-3 lg:grid-cols-[220px_1fr]">
+                <Field label="Poli">
+                  <select
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
+                    value={polyclinicFilter}
+                    onChange={(event) => {
+                      setPolyclinicFilter(event.target.value)
+                      setSelectedSessionId(null)
+                      setPage(1)
+                    }}
                   >
-                    {schedule.polyclinic_name} - {schedule.doctor_name} (
-                    {schedule.start_time.slice(0, 5)}-
-                    {schedule.end_time.slice(0, 5)})
-                  </option>
-                ))}
-              </select>
+                    <option value="all">Semua poli</option>
+                    {polyclinicOptions.map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Jadwal / Dokter">
+                  <select
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
+                    value={activeSessionId ?? ''}
+                    onChange={(event) => {
+                      setSelectedSessionId(event.target.value || null)
+                      setPage(1)
+                    }}
+                  >
+                    {filteredSchedules.length === 0 ? (
+                      <option value="">Tidak ada sesi untuk filter ini</option>
+                    ) : null}
+                    {filteredSchedules.map((schedule) => (
+                      <option
+                        key={schedule.schedule_id}
+                        value={schedule.queue_session_id ?? ''}
+                      >
+                        {schedule.polyclinic_name} - {schedule.doctor_name} (
+                        {schedule.start_time.slice(0, 5)}-
+                        {schedule.end_time.slice(0, 5)})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
             </div>
             <div className="rounded-2xl bg-slate-950 p-4 text-white">
               <div className="flex items-center justify-between gap-3">
@@ -366,6 +447,8 @@ export function QueueManagementPage() {
                   label="Nomor terakhir"
                   value={selectedSchedule?.last_number ?? '-'}
                 />
+                <MiniSessionStat label="Sedang aktif" value={currentTicket?.queue_code ?? '-'} />
+                <MiniSessionStat label="Menunggu" value={stats.waiting} />
               </div>
             </div>
           </div>
@@ -479,60 +562,16 @@ export function QueueManagementPage() {
                             <Eye size={16} />
                             Detail
                           </Button>
-                          <Button
-                            disabled={ticket.status !== 'called'}
-                            variant="secondary"
-                            onClick={() =>
+                          <QueueRowActions
+                            ticket={ticket}
+                            onAction={(status) =>
                               setPendingAction({
-                                status: 'serving',
+                                status,
                                 ticket,
                                 type: 'update-status',
                               })
                             }
-                          >
-                            <Stethoscope size={16} />
-                            Layani
-                          </Button>
-                          <Button
-                            disabled={ticket.status !== 'serving'}
-                            variant="secondary"
-                            onClick={() =>
-                              setPendingAction({
-                                status: 'completed',
-                                ticket,
-                                type: 'update-status',
-                              })
-                            }
-                          >
-                            <CheckCircle2 size={16} />
-                            Selesai
-                          </Button>
-                          <Button
-                            disabled={!isActiveStatus(ticket.status)}
-                            variant="ghost"
-                            onClick={() =>
-                              setPendingAction({
-                                status: 'skipped',
-                                ticket,
-                                type: 'update-status',
-                              })
-                            }
-                          >
-                            <SkipForward size={16} />
-                          </Button>
-                          <Button
-                            disabled={!isActiveStatus(ticket.status)}
-                            variant="danger"
-                            onClick={() =>
-                              setPendingAction({
-                                status: 'cancelled',
-                                ticket,
-                                type: 'update-status',
-                              })
-                            }
-                          >
-                            <OctagonX size={16} />
-                          </Button>
+                          />
                         </div>
                       </td>
                     </tr>
@@ -584,6 +623,74 @@ export function QueueManagementPage() {
   )
 }
 
+function QueueRowActions({
+  onAction,
+  ticket,
+}: {
+  onAction: (status: QueueStatus) => void
+  ticket: QueueTicketDetail
+}) {
+  if (ticket.status === 'called') {
+    return (
+      <>
+        <Button variant="secondary" onClick={() => onAction('serving')}>
+          <Stethoscope size={16} />
+          Layani
+        </Button>
+        <Button variant="ghost" onClick={() => onAction('skipped')}>
+          <SkipForward size={16} />
+          Lewati
+        </Button>
+        <Button variant="danger" onClick={() => onAction('cancelled')}>
+          <OctagonX size={16} />
+          Batal
+        </Button>
+      </>
+    )
+  }
+
+  if (ticket.status === 'serving') {
+    return (
+      <>
+        <Button variant="secondary" onClick={() => onAction('completed')}>
+          <CheckCircle2 size={16} />
+          Selesai
+        </Button>
+        <Button variant="ghost" onClick={() => onAction('skipped')}>
+          <SkipForward size={16} />
+          Lewati
+        </Button>
+      </>
+    )
+  }
+
+  if (ticket.status === 'waiting') {
+    return (
+      <Button variant="danger" onClick={() => onAction('cancelled')}>
+        <OctagonX size={16} />
+        Batal
+      </Button>
+    )
+  }
+
+  return (
+    <span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black text-slate-500">
+      Final
+    </span>
+  )
+}
+
+function Field({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-sm font-bold text-slate-700">
+        {label}
+      </span>
+      {children}
+    </label>
+  )
+}
+
 function TicketDetailPanel({
   onAction,
   ticket,
@@ -618,10 +725,10 @@ function TicketDetailPanel({
           <DetailMetric label="Nomor pasien" value={ticket.queue_number} />
           <DetailMetric label="Nomor dipanggil" value={ticket.current_number} />
           <DetailMetric label="Sisa sebelum pasien" value={remaining} />
-          <DetailMetric
-            label="Perkiraan tunggu"
-            value={`± ${ticket.estimated_wait_minutes} menit`}
-          />
+            <DetailMetric
+              label="Perkiraan tunggu"
+              value={`~ ${ticket.estimated_wait_minutes} menit`}
+            />
         </div>
       </Card>
 
@@ -748,6 +855,26 @@ function buildConfirmState(action: PendingQueueAction | null) {
         ? ('danger' as const)
         : ('default' as const),
   }
+}
+
+function formatDateLabel(dateValue: string) {
+  return new Intl.DateTimeFormat('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(parseDateInputValue(dateValue))
+}
+
+function parseDateInputValue(dateValue: string) {
+  const [year, month, day] = dateValue.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function toDateInputValue(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function StatusBadge({ status }: { status: QueueStatus }) {

@@ -1,14 +1,17 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
+  AlertTriangle,
   CalendarClock,
   CheckCircle2,
   Clock3,
   ClipboardList,
+  DoorOpen,
   RefreshCw,
   Stethoscope,
   UsersRound,
 } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -55,13 +58,99 @@ export function DashboardPage() {
       completionRate:
         tickets.length === 0 ? 0 : Math.round((completed.length / tickets.length) * 100),
       completed: completed.length,
+      called: tickets.filter((ticket) => ticket.status === 'called').length,
+      serving: tickets.filter((ticket) => ticket.status === 'serving').length,
       totalCapacity: schedules.reduce(
         (total, schedule) => total + schedule.quota_limit,
         0,
       ),
       totalTickets: tickets.length,
+      waiting: tickets.filter((ticket) => ticket.status === 'waiting').length,
     }
   }, [schedules, tickets])
+
+  const currentTicket = useMemo(
+    () =>
+      tickets.find((ticket) => ticket.status === 'serving') ??
+      tickets.find((ticket) => ticket.status === 'called') ??
+      null,
+    [tickets],
+  )
+
+  const readiness = useMemo(() => {
+    const activeDoctors =
+      data?.doctors.filter((doctor) => doctor.is_active).length ?? 0
+    const activePolyclinics =
+      data?.polyclinics.filter((polyclinic) => polyclinic.is_active).length ?? 0
+
+    if (activeDoctors === 0 || activePolyclinics === 0) {
+      return {
+        actionLabel: 'Lengkapi Data',
+        actionTo: activeDoctors === 0 ? '/doctors' : '/polyclinics',
+        description:
+          'Data dokter atau poli aktif belum lengkap, sehingga jadwal operasional belum ideal.',
+        icon: <AlertTriangle size={20} />,
+        tone: 'warning' as const,
+        title: 'Data operasional belum lengkap',
+      }
+    }
+
+    if (schedules.length === 0) {
+      return {
+        actionLabel: 'Buat Jadwal',
+        actionTo: '/schedules',
+        description:
+          'Belum ada jadwal untuk hari ini. Aplikasi pasien belum punya sesi antrean yang bisa dipilih.',
+        icon: <CalendarClock size={20} />,
+        tone: 'warning' as const,
+        title: 'Belum ada jadwal hari ini',
+      }
+    }
+
+    if (stats.activeSchedules === 0) {
+      return {
+        actionLabel: 'Kelola Jadwal',
+        actionTo: '/schedules',
+        description:
+          'Jadwal hari ini ada, tetapi belum ada yang berstatus buka untuk menerima antrean.',
+        icon: <DoorOpen size={20} />,
+        tone: 'warning' as const,
+        title: 'Tidak ada sesi yang buka',
+      }
+    }
+
+    if (stats.totalTickets === 0) {
+      return {
+        actionLabel: 'Pantau Antrean',
+        actionTo: '/queues',
+        description:
+          'Jadwal hari ini sudah siap. Antrean akan muncul saat pasien mengambil nomor dari aplikasi.',
+        icon: <CheckCircle2 size={20} />,
+        tone: 'success' as const,
+        title: 'Operasional siap menerima pasien',
+      }
+    }
+
+    return {
+      actionLabel: 'Kelola Antrean',
+      actionTo: '/queues',
+      description: currentTicket
+        ? `Nomor ${currentTicket.queue_code} sedang ${currentTicket.status === 'serving' ? 'dilayani' : 'dipanggil'} di ${currentTicket.polyclinic_name}.`
+        : `${stats.waiting} pasien menunggu dan ${stats.completed} pasien sudah selesai.`,
+      icon: <Activity size={20} />,
+      tone: 'live' as const,
+      title: 'Pelayanan sedang berjalan',
+    }
+  }, [
+    currentTicket,
+    data?.doctors,
+    data?.polyclinics,
+    schedules.length,
+    stats.activeSchedules,
+    stats.completed,
+    stats.totalTickets,
+    stats.waiting,
+  ])
 
   const busiestPolyclinics = useMemo(() => {
     const counts = tickets.reduce<Record<string, number>>((accumulator, ticket) => {
@@ -76,8 +165,22 @@ export function DashboardPage() {
       .slice(0, 4)
   }, [tickets])
 
-  const recentTickets = tickets.slice(0, 6)
-  const upcomingSchedules = schedules.slice(0, 5)
+  const recentTickets = [...tickets]
+    .sort((first, second) => {
+      const priority: Record<QueueStatus, number> = {
+        serving: 0,
+        called: 1,
+        waiting: 2,
+        completed: 3,
+        skipped: 4,
+        cancelled: 5,
+        expired: 6,
+      }
+
+      return priority[first.status] - priority[second.status]
+    })
+    .slice(0, 6)
+  const upcomingSchedules = schedules.slice(0, 6)
   const capacityUsage =
     stats.totalCapacity === 0
       ? 0
@@ -94,6 +197,10 @@ export function DashboardPage() {
                 <Activity size={16} />
                 Kelola Antrean
               </LinkButton>
+              <LinkButton to="/schedules" variant="secondary">
+                <CalendarClock size={16} />
+                Kelola Jadwal
+              </LinkButton>
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -109,6 +216,8 @@ export function DashboardPage() {
           eyebrow="Operational Overview"
           title="Dashboard Admin"
         />
+
+        <ReadinessBanner readiness={readiness} />
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
@@ -153,14 +262,15 @@ export function DashboardPage() {
                   : 'Belum ada antrean aktif'}
               </h3>
               <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-300">
-                Gunakan halaman antrean untuk memanggil pasien berikutnya dan
-                menjaga estimasi waktu tetap sinkron dengan aplikasi pasien.
+                {currentTicket
+                  ? `Fokus saat ini: ${currentTicket.queue_code} atas nama ${currentTicket.patient_name}.`
+                  : 'Gunakan halaman antrean untuk memanggil pasien berikutnya dan menjaga estimasi waktu tetap sinkron dengan aplikasi pasien.'}
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <LiveTile label="Aktif" value={stats.activeTickets} />
-              <LiveTile label="Selesai" value={stats.completed} />
-              <LiveTile label="Tunggu" value={`${stats.avgWait}m`} />
+              <LiveTile label="Menunggu" value={stats.waiting} />
+              <LiveTile label="Sedang" value={currentTicket?.queue_code ?? '-'} />
             </div>
           </div>
         </Card>
@@ -371,6 +481,47 @@ function ScheduleRow({ schedule }: { schedule: ScheduleAvailability }) {
   )
 }
 
+type ReadinessBannerProps = {
+  readiness: {
+    actionLabel: string
+    actionTo: string
+    description: string
+    icon: ReactNode
+    tone: 'live' | 'success' | 'warning'
+    title: string
+  }
+}
+
+function ReadinessBanner({ readiness }: ReadinessBannerProps) {
+  const tone =
+    readiness.tone === 'success'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : readiness.tone === 'live'
+        ? 'border-teal-200 bg-teal-50 text-teal-800'
+        : 'border-amber-200 bg-amber-50 text-amber-800'
+
+  return (
+    <Card className={`border p-4 ${tone}`}>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/70">
+            {readiness.icon}
+          </div>
+          <div>
+            <h3 className="font-black">{readiness.title}</h3>
+            <p className="mt-1 text-sm font-semibold leading-6 opacity-80">
+              {readiness.description}
+            </p>
+          </div>
+        </div>
+        <LinkButton to={readiness.actionTo} variant="secondary">
+          {readiness.actionLabel}
+        </LinkButton>
+      </div>
+    </Card>
+  )
+}
+
 function LiveTile({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-2xl bg-white/10 px-3 py-3 text-center">
@@ -411,7 +562,7 @@ function ActivityItem({ event }: { event: QueueEventFeedItem }) {
         {event.patient_name} - {event.polyclinic_name}
       </p>
       <p className="mt-1 text-xs font-semibold text-slate-500">
-        {event.message ?? 'Status antrean diperbarui'} ·{' '}
+        {event.message ?? 'Status antrean diperbarui'} -{' '}
         {new Date(event.created_at).toLocaleTimeString('id-ID', {
           hour: '2-digit',
           minute: '2-digit',
