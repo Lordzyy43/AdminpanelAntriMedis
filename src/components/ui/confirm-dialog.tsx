@@ -5,6 +5,7 @@ import { Button } from './button'
 
 type ConfirmDialogProps = {
   confirmLabel?: string
+  children?: ReactNode
   description: string
   icon?: ReactNode
   isLoading?: boolean
@@ -17,6 +18,7 @@ type ConfirmDialogProps = {
 
 export function ConfirmDialog({
   confirmLabel = 'Konfirmasi',
+  children,
   description,
   icon,
   isLoading = false,
@@ -48,6 +50,7 @@ export function ConfirmDialog({
               <p className="mt-1 text-sm leading-6 text-slate-500">
                 {description}
               </p>
+              {children ? <div className="mt-4">{children}</div> : null}
             </div>
           </div>
           <button

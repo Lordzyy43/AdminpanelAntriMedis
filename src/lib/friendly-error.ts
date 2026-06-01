@@ -1,5 +1,5 @@
 export function friendlySupabaseError(error: unknown, fallback: string) {
-  const message = error instanceof Error ? error.message : String(error ?? '')
+  const message = extractErrorMessage(error)
   const normalized = message.toLowerCase()
 
   if (
@@ -88,4 +88,26 @@ export function friendlySupabaseError(error: unknown, fallback: string) {
   }
 
   return message || fallback
+}
+
+function extractErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (!error || typeof error !== 'object') return String(error ?? '')
+
+  const record = error as Record<string, unknown>
+  const parts = [
+    record.message,
+    record.details,
+    record.hint,
+    record.code ? `Kode: ${record.code}` : null,
+  ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+
+  if (parts.length > 0) return parts.join(' ')
+
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return ''
+  }
 }

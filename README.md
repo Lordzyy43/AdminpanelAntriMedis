@@ -1,73 +1,144 @@
-# React + TypeScript + Vite
+# AntriMedis Admin Panel
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Web admin panel untuk mengelola operasional antrean AntriMedis. Admin panel dipakai oleh petugas klinik untuk memantau dashboard harian, mengelola antrean hari-H, menyusun jadwal praktik, dan merawat master data dokter serta poli.
 
-Currently, two official plugins are available:
+## Status
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Status per 1 Juni 2026:
 
-## React Compiler
+- Scope aktif: satu klinik/cabang utama.
+- Role web: admin klinik.
+- Stack: React, TypeScript, Vite, Tailwind CSS, Supabase JS, TanStack Query, React Hook Form, Zod, Zustand, Lucide.
+- Dashboard, antrean, jadwal, dokter, dan poli sudah terhubung ke Supabase.
+- CRUD dokter/poli mendukung edit, arsip/nonaktif, dan safe delete lewat RPC.
+- Jadwal mendukung create/update transactional, duplikasi ke hari lain, filter tanggal, dan detail operasional.
+- Antrean dibuat sebagai flow hari-H, bukan booking future.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Fitur Utama
 
-## Expanding the ESLint configuration
+- Login admin dengan Supabase Auth dan role guard.
+- Dashboard operasional dengan readiness banner, statistik, snapshot antrean, dan activity feed.
+- Manajemen antrean hari ini:
+  - pilih jadwal open hari ini,
+  - panggil antrean berikutnya,
+  - ubah status ke serving/completed/skipped/cancelled,
+  - lihat detail pasien dan posisi antrean.
+- Manajemen jadwal:
+  - buat jadwal dan queue session secara atomic,
+  - edit jadwal,
+  - duplikasi jadwal per baris atau massal,
+  - filter hari ini, besok, semua, dan reset.
+- Manajemen dokter:
+  - tambah/edit dokter,
+  - hubungkan ke poli,
+  - pagination,
+  - archive/delete aman sesuai pemakaian data.
+- Manajemen poli:
+  - tambah/edit poli,
+  - prefix antrean,
+  - pagination,
+  - archive/delete aman sesuai pemakaian data.
+- UI modal terpusat untuk form dan confirm dialog.
+- Toast feedback dan empty/loading states.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Setup
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+1. Copy env example:
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```powershell
+Copy-Item .env.example .env.local
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+2. Isi `.env.local`:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```txt
+VITE_SUPABASE_URL=https://vicwdxxjaoekppembbvt.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key
 ```
+
+3. Install dependency:
+
+```powershell
+npm install
+```
+
+4. Jalankan dev server:
+
+```powershell
+npm run dev
+```
+
+Default Vite URL:
+
+```txt
+http://localhost:5173/
+```
+
+## Scripts
+
+```powershell
+npm run dev
+npm run lint
+npm run build
+npm run preview
+```
+
+Terakhir dicek:
+
+- `npm run lint` pass.
+- `npm run build` pass.
+- Dev server memberi HTTP 200 di `http://localhost:5173/`.
+
+Catatan: build masih memberi warning chunk Vite lebih dari 500 kB. Ini warning optimasi bundle, bukan error fungsional.
+
+## Struktur Folder
+
+```txt
+src/
++-- app/
+|   +-- navigation.tsx
+|   +-- providers.tsx
+|   `-- routes.tsx
++-- components/
+|   +-- layout/
+|   `-- ui/
++-- config/
+|   `-- env.ts
++-- features/
+|   +-- auth/
+|   +-- dashboard/
+|   +-- doctors/
+|   +-- polyclinics/
+|   +-- queues/
+|   `-- schedules/
++-- lib/
+|   +-- friendly-error.ts
+|   +-- pagination.ts
+|   +-- supabase.ts
+|   `-- utils.ts
++-- types/
+`-- main.tsx
+```
+
+## Akun Admin Demo
+
+```txt
+Email    : admin@antrimedis.test
+Password : AdminMedis2026!
+Role     : admin
+```
+
+Pastikan akun admin memiliki data role dan staff di database. Jika login auth berhasil tetapi panel menolak akses, cek `user_roles` dan `clinic_staff`.
+
+## Catatan Bisnis Logic
+
+- Halaman antrean hanya untuk pelayanan hari ini. Jadwal besok/lusa dibuat dari halaman Jadwal.
+- Admin tidak bisa memanggil nomor baru jika masih ada tiket `called` atau `serving`.
+- Status tiket dikunci oleh RPC dan trigger database, bukan hanya oleh UI.
+- Delete dokter/poli memakai safe delete. Data yang pernah dipakai jadwal/history akan diarsipkan agar riwayat tidak rusak.
+
+## Dokumen Terkait
+
+- Mobile docs: `../apps/docs/prd.md`
+- Status terbaru: `../apps/docs/prd_status_roadmap.md`
+- Snapshot project: `../apps/docs/current_project_snapshot.md`
