@@ -40,11 +40,16 @@ export type QueueTicketDetail = {
   queue_number: number
   queue_code: string
   status: QueueStatus
+  status_reason: string | null
+  cancel_reason: string | null
   estimated_wait_minutes: number
   created_at: string
   called_at: string | null
   serving_started_at: string | null
   completed_at: string | null
+  skipped_at: string | null
+  cancelled_at: string | null
+  expired_at: string | null
   current_number: number
   last_number: number
   schedule_id: string
@@ -80,6 +85,20 @@ export type QueueEventFeedItem = {
   schedule_date: string
   start_time: string
   end_time: string
+}
+
+export type QueueTicketTimelineItem = {
+  event_id: string
+  queue_ticket_id: string
+  actor_id: string | null
+  actor_name: string | null
+  actor_type: 'patient' | 'staff' | 'system'
+  previous_status: QueueStatus | null
+  new_status: QueueStatus
+  message: string | null
+  created_at: string
+  queue_code: string
+  patient_id: string
 }
 
 export type ClinicBranch = {

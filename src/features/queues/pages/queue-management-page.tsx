@@ -32,10 +32,15 @@ import { useToast } from '../../../components/ui/use-toast'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
 import { paginateItems } from '../../../lib/pagination'
 import { supabase } from '../../../lib/supabase'
-import type { QueueStatus, QueueTicketDetail } from '../../../types/queue'
+import type {
+  QueueStatus,
+  QueueTicketDetail,
+  QueueTicketTimelineItem,
+} from '../../../types/queue'
 import {
   callNextQueue,
   fetchQueueTickets,
+  fetchQueueTicketTimeline,
   fetchSchedules,
   updateQueueStatus,
 } from '../services/queue-service'
@@ -74,6 +79,8 @@ export function QueueManagementPage() {
   const [detailTicket, setDetailTicket] = useState<QueueTicketDetail | null>(null)
   const [page, setPage] = useState(1)
   const [pendingAction, setPendingAction] = useState<PendingQueueAction | null>(null)
+  const [actionReason, setActionReason] = useState('')
+  const [actionReasonError, setActionReasonError] = useState<string | null>(null)
   const [polyclinicFilter, setPolyclinicFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<QueueStatus | 'all'>('all')
@@ -181,12 +188,32 @@ export function QueueManagementPage() {
       completed: tickets.filter((ticket) => ticket.status === 'completed').length,
     }
   }, [tickets])
+  const waitingTickets = useMemo(
+    () => tickets.filter((ticket) => ticket.status === 'waiting'),
+    [tickets],
+  )
+  const activeTickets = useMemo(
+    () =>
+      tickets.filter(
+        (ticket) => ticket.status === 'called' || ticket.status === 'serving',
+      ),
+    [tickets],
+  )
+  const finalTickets = useMemo(
+    () => tickets.filter((ticket) => !isActiveStatus(ticket.status)),
+    [tickets],
+  )
   const hasUnresolvedCall = tickets.some((ticket) =>
     ticket.status === 'called' || ticket.status === 'serving',
   )
   const currentTicket = tickets.find(
     (ticket) => ticket.status === 'called' || ticket.status === 'serving',
   )
+  const callNextGuidance = currentTicket
+    ? `Selesaikan, lewati, atau batalkan ${currentTicket.queue_code} sebelum memanggil nomor berikutnya.`
+    : stats.waiting === 0
+      ? 'Belum ada pasien waiting pada sesi ini.'
+      : 'Siap memanggil pasien waiting paling awal.'
 
   const callNextMutation = useMutation({
     mutationFn: () => callNextQueue(activeSessionId!),
@@ -214,12 +241,14 @@ export function QueueManagementPage() {
 
   const updateStatusMutation = useMutation({
     mutationFn: ({
+      message,
       ticketId,
       status,
     }: {
+      message?: string
       ticketId: string
       status: QueueStatus
-    }) => updateQueueStatus(ticketId, status),
+    }) => updateQueueStatus(ticketId, status, message),
     onSuccess: () => {
       notify({
         message: 'Status antrean berhasil diperbarui.',
@@ -253,10 +282,22 @@ export function QueueManagementPage() {
       return
     }
 
+    if (requiresReason(pendingAction.status) && actionReason.trim().length < 5) {
+      setActionReasonError('Tulis alasan minimal 5 karakter agar histori pasien jelas.')
+      return
+    }
+
     updateStatusMutation.mutate({
+      message: actionReason.trim() || undefined,
       status: pendingAction.status,
       ticketId: pendingAction.ticket.ticket_id,
     })
+  }
+
+  function openPendingAction(action: PendingQueueAction) {
+    setPendingAction(action)
+    setActionReason('')
+    setActionReasonError(null)
   }
 
   return (
@@ -272,7 +313,7 @@ export function QueueManagementPage() {
                 hasUnresolvedCall ||
                 stats.waiting === 0
               }
-              onClick={() => setPendingAction({ type: 'call-next' })}
+              onClick={() => openPendingAction({ type: 'call-next' })}
             >
               {callNextMutation.isPending ? (
                 <Loader2 className="animate-spin" size={16} />
@@ -304,6 +345,12 @@ export function QueueManagementPage() {
               actionError,
               'Coba refresh data antrean lalu ulangi aksi.',
             )}
+          </FeedbackBanner>
+        ) : null}
+
+        {hasUnresolvedCall ? (
+          <FeedbackBanner title="Panggil berikutnya terkunci" tone="warning">
+            {callNextGuidance}
           </FeedbackBanner>
         ) : null}
 
@@ -364,6 +411,40 @@ export function QueueManagementPage() {
             label="Selesai"
             tone="emerald"
             value={stats.completed}
+          />
+        </div>
+
+        <CurrentActivePanel
+          currentTicket={currentTicket}
+          isBusy={updateStatusMutation.isPending}
+          waitingCount={stats.waiting}
+          onAction={(ticket, status) =>
+            openPendingAction({
+              status,
+              ticket,
+              type: 'update-status',
+            })
+          }
+        />
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          <QueueStatusSection
+            description="Nomor yang belum dipanggil petugas."
+            emptyLabel="Tidak ada pasien menunggu"
+            tickets={waitingTickets}
+            title="Menunggu"
+          />
+          <QueueStatusSection
+            description="Nomor yang sedang dipanggil atau dilayani."
+            emptyLabel="Tidak ada antrean aktif"
+            tickets={activeTickets}
+            title="Aktif"
+          />
+          <QueueStatusSection
+            description="Tiket yang sudah selesai, dilewati, atau dibatalkan."
+            emptyLabel="Belum ada riwayat final"
+            tickets={finalTickets}
+            title="Riwayat Hari Ini"
           />
         </div>
 
@@ -565,7 +646,7 @@ export function QueueManagementPage() {
                           <QueueRowActions
                             ticket={ticket}
                             onAction={(status) =>
-                              setPendingAction({
+                              openPendingAction({
                                 status,
                                 ticket,
                                 type: 'update-status',
@@ -595,9 +676,40 @@ export function QueueManagementPage() {
           open={Boolean(pendingAction)}
           title={confirmState.title}
           tone={confirmState.tone}
-          onCancel={() => setPendingAction(null)}
+          onCancel={() => {
+            setPendingAction(null)
+            setActionReason('')
+            setActionReasonError(null)
+          }}
           onConfirm={confirmPendingAction}
-        />
+        >
+          {confirmState.requiresReason ? (
+            <label className="block text-left">
+              <span className="mb-1.5 block text-sm font-bold text-slate-700">
+                Alasan untuk pasien dan histori
+              </span>
+              <textarea
+                className="min-h-24 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
+                placeholder={
+                  pendingAction?.type === 'update-status' &&
+                  pendingAction.status === 'skipped'
+                    ? 'Contoh: Pasien tidak hadir saat dipanggil.'
+                    : 'Contoh: Pasien meminta pembatalan antrean.'
+                }
+                value={actionReason}
+                onChange={(event) => {
+                  setActionReason(event.target.value)
+                  setActionReasonError(null)
+                }}
+              />
+              {actionReasonError ? (
+                <span className="mt-1.5 block text-sm font-bold text-rose-600">
+                  {actionReasonError}
+                </span>
+              ) : null}
+            </label>
+          ) : null}
+        </ConfirmDialog>
         <FormDrawer
           description="Detail pasien, posisi antrean, dan jadwal layanan."
           open={Boolean(detailTicket)}
@@ -608,7 +720,7 @@ export function QueueManagementPage() {
             <TicketDetailPanel
               ticket={detailTicket}
               onAction={(status) => {
-                setPendingAction({
+                openPendingAction({
                   status,
                   ticket: detailTicket,
                   type: 'update-status',
@@ -633,7 +745,7 @@ function QueueRowActions({
   if (ticket.status === 'called') {
     return (
       <>
-        <Button variant="secondary" onClick={() => onAction('serving')}>
+        <Button onClick={() => onAction('serving')}>
           <Stethoscope size={16} />
           Layani
         </Button>
@@ -643,7 +755,7 @@ function QueueRowActions({
         </Button>
         <Button variant="danger" onClick={() => onAction('cancelled')}>
           <OctagonX size={16} />
-          Batal
+          Batalkan
         </Button>
       </>
     )
@@ -652,13 +764,17 @@ function QueueRowActions({
   if (ticket.status === 'serving') {
     return (
       <>
-        <Button variant="secondary" onClick={() => onAction('completed')}>
+        <Button onClick={() => onAction('completed')}>
           <CheckCircle2 size={16} />
           Selesai
         </Button>
         <Button variant="ghost" onClick={() => onAction('skipped')}>
           <SkipForward size={16} />
           Lewati
+        </Button>
+        <Button variant="danger" onClick={() => onAction('cancelled')}>
+          <OctagonX size={16} />
+          Batalkan
         </Button>
       </>
     )
@@ -668,15 +784,199 @@ function QueueRowActions({
     return (
       <Button variant="danger" onClick={() => onAction('cancelled')}>
         <OctagonX size={16} />
-        Batal
+        Batalkan
       </Button>
     )
   }
 
+  return <FinalStatusPill status={ticket.status} />
+}
+
+function FinalStatusPill({ status }: { status: QueueStatus }) {
+  const labels: Record<QueueStatus, string> = {
+    waiting: 'Menunggu',
+    called: 'Dipanggil',
+    serving: 'Dilayani',
+    completed: 'Final: Selesai',
+    skipped: 'Final: Dilewati',
+    cancelled: 'Final: Dibatalkan',
+    expired: 'Final: Kedaluwarsa',
+  }
+  const tone =
+    status === 'completed'
+      ? 'bg-emerald-50 text-emerald-700'
+      : status === 'cancelled'
+        ? 'bg-rose-50 text-rose-700'
+        : status === 'skipped'
+          ? 'bg-orange-50 text-orange-700'
+          : 'bg-slate-100 text-slate-600'
+
   return (
-    <span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black text-slate-500">
-      Final
+    <span className={`rounded-lg px-3 py-2 text-xs font-black ${tone}`}>
+      {labels[status]}
     </span>
+  )
+}
+
+function CurrentActivePanel({
+  currentTicket,
+  isBusy,
+  onAction,
+  waitingCount,
+}: {
+  currentTicket?: QueueTicketDetail
+  isBusy: boolean
+  onAction: (ticket: QueueTicketDetail, status: QueueStatus) => void
+  waitingCount: number
+}) {
+  if (!currentTicket) {
+    return (
+      <Card className="border-dashed border-teal-200 bg-teal-50/50 p-5">
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div>
+            <p className="text-sm font-black uppercase tracking-wide text-teal-700">
+              Antrean Aktif
+            </p>
+            <h3 className="mt-1 text-xl font-black text-slate-950">
+              Tidak ada pasien yang sedang dipanggil
+            </h3>
+            <p className="mt-1 text-sm font-semibold text-slate-600">
+              {waitingCount > 0
+                ? `${waitingCount} pasien menunggu. Gunakan tombol Panggil Berikutnya untuk mulai pelayanan.`
+                : 'Sesi ini belum memiliki pasien waiting.'}
+            </p>
+          </div>
+          <div className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-teal-700 shadow-sm shadow-teal-900/5">
+            Siap Operasional
+          </div>
+        </div>
+      </Card>
+    )
+  }
+
+  const isServing = currentTicket.status === 'serving'
+
+  return (
+    <Card className="overflow-hidden border-teal-200">
+      <div className="grid gap-0 lg:grid-cols-[300px_1fr]">
+        <div className="bg-slate-950 p-6 text-white">
+          <p className="text-xs font-black uppercase tracking-wide text-teal-200">
+            Sedang {isServing ? 'Dilayani' : 'Dipanggil'}
+          </p>
+          <p className="mt-3 text-5xl font-black tracking-tight">
+            {currentTicket.queue_code}
+          </p>
+          <div className="mt-3">
+            <StatusBadge status={currentTicket.status} />
+          </div>
+        </div>
+        <div className="p-5">
+          <div className="grid gap-4 xl:grid-cols-[1fr_auto] xl:items-start">
+            <div>
+              <h3 className="text-2xl font-black text-slate-950">
+                {currentTicket.patient_name}
+              </h3>
+              <p className="mt-1 text-sm font-semibold text-slate-500">
+                {currentTicket.polyclinic_name} - {currentTicket.doctor_name}
+              </p>
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                {isServing
+                  ? 'Pasien sedang dalam proses pelayanan. Selesaikan setelah layanan tuntas, atau batalkan/lewati dengan alasan jika pelayanan tidak bisa dilanjutkan.'
+                  : 'Pasien sudah dipanggil. Mulai pelayanan ketika pasien hadir, atau lewati/batalkan dengan alasan jika diperlukan.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 xl:justify-end">
+              {currentTicket.status === 'called' ? (
+                <Button
+                  disabled={isBusy}
+                  onClick={() => onAction(currentTicket, 'serving')}
+                >
+                  <Stethoscope size={16} />
+                  Layani
+                </Button>
+              ) : (
+                <Button
+                  disabled={isBusy}
+                  onClick={() => onAction(currentTicket, 'completed')}
+                >
+                  <CheckCircle2 size={16} />
+                  Selesai
+                </Button>
+              )}
+              <Button
+                disabled={isBusy}
+                variant="ghost"
+                onClick={() => onAction(currentTicket, 'skipped')}
+              >
+                <SkipForward size={16} />
+                Lewati
+              </Button>
+              <Button
+                disabled={isBusy}
+                variant="danger"
+                onClick={() => onAction(currentTicket, 'cancelled')}
+              >
+                <OctagonX size={16} />
+                Batalkan oleh Petugas
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function QueueStatusSection({
+  description,
+  emptyLabel,
+  tickets,
+  title,
+}: {
+  description: string
+  emptyLabel: string
+  tickets: QueueTicketDetail[]
+  title: string
+}) {
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-black text-slate-950">{title}</h3>
+          <p className="mt-1 text-sm text-slate-500">{description}</p>
+        </div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">
+          {tickets.length}
+        </span>
+      </div>
+      <div className="mt-4 space-y-2">
+        {tickets.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 px-3 py-3 text-sm font-bold text-slate-500">
+            {emptyLabel}
+          </p>
+        ) : (
+          tickets.slice(0, 4).map((ticket) => (
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-3"
+              key={ticket.ticket_id}
+            >
+              <div>
+                <p className="font-black text-slate-950">{ticket.queue_code}</p>
+                <p className="text-xs font-semibold text-slate-500">
+                  {ticket.patient_name}
+                </p>
+              </div>
+              <StatusBadge status={ticket.status} />
+            </div>
+          ))
+        )}
+        {tickets.length > 4 ? (
+          <p className="text-xs font-bold text-slate-500">
+            +{tickets.length - 4} tiket lain ada di tabel detail.
+          </p>
+        ) : null}
+      </div>
+    </Card>
   )
 }
 
@@ -699,6 +999,10 @@ function TicketDetailPanel({
   ticket: QueueTicketDetail
 }) {
   const remaining = Math.max(ticket.queue_number - ticket.current_number - 1, 0)
+  const timelineQuery = useQuery({
+    queryKey: ['queue-ticket-timeline', ticket.ticket_id],
+    queryFn: () => fetchQueueTicketTimeline(ticket.ticket_id),
+  })
 
   return (
     <div className="space-y-4">
@@ -717,6 +1021,30 @@ function TicketDetailPanel({
           </div>
           <StatusBadge status={ticket.status} />
         </div>
+      </Card>
+
+      {ticket.status_reason ? (
+        <Card className="border-rose-100 bg-rose-50 p-5">
+          <h3 className="mb-2 font-black text-rose-950">Catatan status</h3>
+          <p className="text-sm font-semibold leading-6 text-rose-700">
+            {ticket.status_reason}
+          </p>
+        </Card>
+      ) : null}
+
+      <Card className="p-5">
+        <h3 className="mb-3 font-black text-slate-950">Timeline antrean</h3>
+        {timelineQuery.isLoading ? (
+          <p className="text-sm font-semibold text-slate-500">
+            Memuat timeline...
+          </p>
+        ) : timelineQuery.data && timelineQuery.data.length > 0 ? (
+          <QueueTimeline events={timelineQuery.data} />
+        ) : (
+          <p className="rounded-xl bg-slate-50 px-3 py-3 text-sm font-bold text-slate-500">
+            Belum ada event tercatat untuk tiket ini.
+          </p>
+        )}
       </Card>
 
       <Card className="p-5">
@@ -782,6 +1110,128 @@ function TicketDetailPanel({
   )
 }
 
+function QueueTimeline({ events }: { events: QueueTicketTimelineItem[] }) {
+  return (
+    <div className="space-y-0">
+      {events.map((event, index) => {
+        const status = queueStatusMeta(event.new_status)
+        const isLast = index === events.length - 1
+
+        return (
+          <div className="flex gap-3" key={event.event_id}>
+            <div className="flex flex-col items-center">
+              <div
+                className={[
+                  'flex h-9 w-9 items-center justify-center rounded-lg',
+                  status.backgroundClass,
+                  status.textClass,
+                ].join(' ')}
+              >
+                {status.icon}
+              </div>
+              {!isLast ? <div className="h-10 w-px bg-slate-200" /> : null}
+            </div>
+            <div className="min-w-0 flex-1 pb-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-black text-slate-950">{status.label}</p>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-black uppercase text-slate-500">
+                  {actorLabel(event)}
+                </span>
+              </div>
+              <p className="mt-1 text-sm font-semibold leading-6 text-slate-600">
+                {event.message ?? status.fallbackMessage}
+              </p>
+              <p className="mt-1 text-xs font-bold text-slate-400">
+                {formatDateTimeLabel(event.created_at)}
+              </p>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function queueStatusMeta(status: QueueStatus) {
+  const meta: Record<
+    QueueStatus,
+    {
+      backgroundClass: string
+      fallbackMessage: string
+      icon: ReactNode
+      label: string
+      textClass: string
+    }
+  > = {
+    waiting: {
+      backgroundClass: 'bg-blue-50',
+      fallbackMessage: 'Nomor antrean dibuat dan masuk daftar tunggu.',
+      icon: <Clock3 size={17} />,
+      label: 'Menunggu',
+      textClass: 'text-blue-700',
+    },
+    called: {
+      backgroundClass: 'bg-amber-50',
+      fallbackMessage: 'Nomor antrean dipanggil oleh petugas.',
+      icon: <Megaphone size={17} />,
+      label: 'Dipanggil',
+      textClass: 'text-amber-700',
+    },
+    serving: {
+      backgroundClass: 'bg-teal-50',
+      fallbackMessage: 'Pelayanan pasien dimulai.',
+      icon: <Stethoscope size={17} />,
+      label: 'Dilayani',
+      textClass: 'text-teal-700',
+    },
+    completed: {
+      backgroundClass: 'bg-emerald-50',
+      fallbackMessage: 'Pelayanan pasien selesai.',
+      icon: <CheckCircle2 size={17} />,
+      label: 'Selesai',
+      textClass: 'text-emerald-700',
+    },
+    skipped: {
+      backgroundClass: 'bg-orange-50',
+      fallbackMessage: 'Nomor antrean dilewati oleh petugas.',
+      icon: <SkipForward size={17} />,
+      label: 'Dilewati',
+      textClass: 'text-orange-700',
+    },
+    cancelled: {
+      backgroundClass: 'bg-rose-50',
+      fallbackMessage: 'Antrean dibatalkan.',
+      icon: <OctagonX size={17} />,
+      label: 'Dibatalkan',
+      textClass: 'text-rose-700',
+    },
+    expired: {
+      backgroundClass: 'bg-slate-100',
+      fallbackMessage: 'Antrean kedaluwarsa.',
+      icon: <Clock3 size={17} />,
+      label: 'Kedaluwarsa',
+      textClass: 'text-slate-600',
+    },
+  }
+  return meta[status]
+}
+
+function actorLabel(event: QueueTicketTimelineItem) {
+  if (event.actor_type === 'patient') return 'Pasien'
+  if (event.actor_type === 'staff') return event.actor_name ?? 'Petugas'
+  return 'Sistem'
+}
+
+function formatDateTimeLabel(value: string) {
+  return new Intl.DateTimeFormat('id-ID', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(value))
+}
+
 function DetailMetric({
   label,
   value,
@@ -817,6 +1267,7 @@ function buildConfirmState(action: PendingQueueAction | null) {
     return {
       confirmLabel: 'Konfirmasi',
       description: '',
+      requiresReason: false,
       title: '',
       tone: 'default' as const,
     }
@@ -826,6 +1277,7 @@ function buildConfirmState(action: PendingQueueAction | null) {
     return {
       confirmLabel: 'Panggil',
       description: 'Sistem akan memanggil pasien waiting paling awal pada jadwal aktif.',
+      requiresReason: false,
       title: 'Panggil antrean berikutnya?',
       tone: 'default' as const,
     }
@@ -849,12 +1301,17 @@ function buildConfirmState(action: PendingQueueAction | null) {
           ? 'Lewati'
           : 'Konfirmasi',
     description: `${labels[action.status]} untuk nomor ${action.ticket.queue_code} atas nama ${action.ticket.patient_name}.`,
+    requiresReason: requiresReason(action.status),
     title: `${labels[action.status]}?`,
     tone:
       action.status === 'cancelled' || action.status === 'skipped'
         ? ('danger' as const)
         : ('default' as const),
   }
+}
+
+function requiresReason(status: QueueStatus) {
+  return status === 'cancelled' || status === 'skipped'
 }
 
 function formatDateLabel(dateValue: string) {
@@ -884,7 +1341,7 @@ function StatusBadge({ status }: { status: QueueStatus }) {
     serving: 'Dilayani',
     completed: 'Selesai',
     skipped: 'Dilewati',
-    cancelled: 'Batal',
+    cancelled: 'Dibatalkan',
     expired: 'Kedaluwarsa',
   }
   const tone =
@@ -896,7 +1353,11 @@ function StatusBadge({ status }: { status: QueueStatus }) {
           ? 'bg-teal-50 text-teal-700'
           : status === 'completed'
             ? 'bg-emerald-50 text-emerald-700'
-            : 'bg-slate-100 text-slate-600'
+            : status === 'cancelled'
+              ? 'bg-rose-50 text-rose-700'
+              : status === 'skipped'
+                ? 'bg-orange-50 text-orange-700'
+                : 'bg-slate-100 text-slate-600'
 
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-black ${tone}`}>

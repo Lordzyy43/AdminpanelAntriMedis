@@ -583,7 +583,7 @@ function ReadinessRow({ label, value }: { label: string; value: number }) {
 
 function StatusBadge({ status }: { status: QueueTicketDetail['status'] }) {
   const labels: Record<QueueStatus, string> = {
-    cancelled: 'Batal',
+    cancelled: 'Dibatalkan',
     called: 'Dipanggil',
     completed: 'Selesai',
     expired: 'Kedaluwarsa',
@@ -600,7 +600,11 @@ function StatusBadge({ status }: { status: QueueTicketDetail['status'] }) {
           ? 'bg-teal-50 text-teal-700'
           : status === 'completed'
             ? 'bg-emerald-50 text-emerald-700'
-            : 'bg-slate-100 text-slate-600'
+            : status === 'cancelled'
+              ? 'bg-rose-50 text-rose-700'
+              : status === 'skipped'
+                ? 'bg-orange-50 text-orange-700'
+                : 'bg-slate-100 text-slate-600'
 
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-black ${tone}`}>

@@ -1,5 +1,10 @@
 import { supabase } from '../../../lib/supabase'
-import type { QueueStatus, QueueTicketDetail, ScheduleAvailability } from '../../../types/queue'
+import type {
+  QueueStatus,
+  QueueTicketDetail,
+  QueueTicketTimelineItem,
+  ScheduleAvailability,
+} from '../../../types/queue'
 
 export async function fetchSchedules(serviceDate: string) {
   const { data, error } = await supabase
@@ -35,13 +40,83 @@ export async function callNextQueue(queueSessionId: string) {
   return data as QueueTicketDetail
 }
 
-export async function updateQueueStatus(ticketId: string, status: QueueStatus) {
+export async function updateQueueStatus(
+  ticketId: string,
+  status: QueueStatus,
+  message?: string,
+) {
+  const { data: currentTicket, error: currentTicketError } = await supabase
+    .from('v_queue_ticket_details')
+    .select('ticket_id, status, queue_code')
+    .eq('ticket_id', ticketId)
+    .single()
+
+  if (currentTicketError) throw currentTicketError
+
+  const currentStatus = currentTicket.status as QueueStatus
+  if (!isAllowedTransition(currentStatus, status)) {
+    throw new Error(
+      `Status antrean ${currentTicket.queue_code} sudah ${queueStatusLabel(currentStatus)}. Tidak bisa diubah ke ${queueStatusLabel(status)}. Refresh data antrean lalu lanjutkan dari status terbaru.`,
+    )
+  }
+
   const { data, error } = await supabase.rpc('update_queue_status', {
     p_ticket_id: ticketId,
     p_new_status: status,
-    p_message: `Admin changed status to ${status}`,
+    p_message: message?.trim() || defaultStatusMessage(status),
   })
 
   if (error) throw error
   return data as QueueTicketDetail
+}
+
+export async function fetchQueueTicketTimeline(ticketId: string) {
+  const { data, error } = await supabase
+    .from('v_queue_ticket_timeline')
+    .select('*')
+    .eq('queue_ticket_id', ticketId)
+    .order('created_at', { ascending: true })
+
+  if (error) throw error
+  return data as QueueTicketTimelineItem[]
+}
+
+function defaultStatusMessage(status: QueueStatus) {
+  const messages: Record<QueueStatus, string> = {
+    waiting: 'Dikembalikan ke status menunggu',
+    called: 'Pasien dipanggil oleh petugas',
+    serving: 'Pelayanan pasien dimulai',
+    completed: 'Pelayanan pasien selesai',
+    skipped: 'Pasien dilewati oleh petugas',
+    cancelled: 'Antrean dibatalkan oleh petugas',
+    expired: 'Antrean kedaluwarsa',
+  }
+  return messages[status]
+}
+
+function isAllowedTransition(currentStatus: QueueStatus, nextStatus: QueueStatus) {
+  if (currentStatus === nextStatus) return true
+  if (currentStatus === 'waiting') {
+    return ['skipped', 'cancelled', 'expired'].includes(nextStatus)
+  }
+  if (currentStatus === 'called') {
+    return ['serving', 'skipped', 'cancelled', 'expired'].includes(nextStatus)
+  }
+  if (currentStatus === 'serving') {
+    return ['completed', 'skipped', 'cancelled', 'expired'].includes(nextStatus)
+  }
+  return false
+}
+
+function queueStatusLabel(status: QueueStatus) {
+  const labels: Record<QueueStatus, string> = {
+    waiting: 'Menunggu',
+    called: 'Dipanggil',
+    serving: 'Dilayani',
+    completed: 'Selesai',
+    skipped: 'Dilewati',
+    cancelled: 'Dibatalkan',
+    expired: 'Kedaluwarsa',
+  }
+  return labels[status]
 }
