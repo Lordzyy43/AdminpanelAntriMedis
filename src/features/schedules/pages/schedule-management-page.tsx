@@ -3,7 +3,9 @@ import {
   CalendarPlus,
   CalendarRange,
   Clock3,
+  Copy,
   Eye,
+  FilterX,
   Loader2,
   Pencil,
   Plus,
@@ -34,9 +36,11 @@ import type { ScheduleAvailability, ScheduleStatus } from '../../../types/queue'
 import {
   createSchedule,
   deleteSchedule,
+  duplicateSchedules,
   fetchScheduleManagementRows,
   fetchScheduleReferences,
   updateSchedule,
+  type DuplicateScheduleResult,
   type SchedulePayload,
 } from '../services/schedule-service'
 
@@ -64,6 +68,14 @@ type PendingScheduleSave = {
   schedule: ScheduleAvailability | null
 }
 
+type PendingDuplicate = {
+  description: string
+  sourceLabel: string
+  schedules: ScheduleAvailability[]
+  targetDate: string
+  title: string
+}
+
 const statusOptions: Array<{ value: ScheduleStatus; label: string }> = [
   { value: 'open', label: 'Buka' },
   { value: 'closed', label: 'Tutup' },
@@ -71,7 +83,7 @@ const statusOptions: Array<{ value: ScheduleStatus; label: string }> = [
   { value: 'cancelled', label: 'Batal' },
 ]
 
-const today = new Date().toISOString().slice(0, 10)
+const today = toDateInputValue(new Date())
 const pageSize = 8
 
 const emptyDraft: ScheduleDraft = {
@@ -96,6 +108,7 @@ export function ScheduleManagementPage() {
   const [draft, setDraft] = useState<ScheduleDraft>(emptyDraft)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ScheduleAvailability | null>(null)
+  const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null)
   const [pendingSave, setPendingSave] = useState<PendingScheduleSave | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [dateFilter, setDateFilter] = useState(today)
@@ -127,6 +140,35 @@ export function ScheduleManagementPage() {
     }
   }, [schedules])
 
+  const schedulesOnSelectedDate = useMemo(
+    () =>
+      dateFilter
+        ? schedules.filter((schedule) => schedule.schedule_date === dateFilter)
+        : [],
+    [dateFilter, schedules],
+  )
+
+  const selectedDateStats = useMemo(
+    () => ({
+      active: schedulesOnSelectedDate.filter(
+        (schedule) => schedule.status === 'open' || schedule.status === 'full',
+      ).length,
+      cancelled: schedulesOnSelectedDate.filter(
+        (schedule) => schedule.status === 'cancelled',
+      ).length,
+      total: schedulesOnSelectedDate.length,
+    }),
+    [schedulesOnSelectedDate],
+  )
+
+  const duplicatableSchedulesOnSelectedDate = useMemo(
+    () =>
+      schedulesOnSelectedDate.filter(
+        (schedule) => schedule.status !== 'cancelled',
+      ),
+    [schedulesOnSelectedDate],
+  )
+
   const filteredSchedules = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase()
 
@@ -157,7 +199,14 @@ export function ScheduleManagementPage() {
 
   const filteredPolyclinics =
     references?.polyclinics.filter(
-      (polyclinic) => !draft.branch_id || polyclinic.branch_id === draft.branch_id,
+      (polyclinic) =>
+        (!draft.branch_id || polyclinic.branch_id === draft.branch_id) &&
+        (polyclinic.is_active || polyclinic.id === draft.polyclinic_id),
+    ) ?? []
+
+  const selectableDoctors =
+    references?.doctors.filter(
+      (doctor) => doctor.is_active || doctor.id === draft.doctor_id,
     ) ?? []
 
   function defaultDraft(): ScheduleDraft {
@@ -221,6 +270,42 @@ export function ScheduleManagementPage() {
     },
   })
 
+  const duplicateMutation = useMutation({
+    mutationFn: ({
+      schedules: schedulesToDuplicate,
+      targetDate,
+    }: {
+      schedules: ScheduleAvailability[]
+      targetDate: string
+    }) => duplicateSchedules(schedulesToDuplicate, targetDate),
+    onSuccess: async (result) => {
+      const message = buildDuplicateSuccessMessage(result)
+      setNotice({
+        text: message,
+        tone: result.failed > 0 ? 'warning' : 'success',
+        title: result.failed > 0 ? 'Duplikasi sebagian berhasil' : undefined,
+      })
+      notify({
+        message,
+        title: result.failed > 0 ? 'Sebagian berhasil' : 'Berhasil',
+        tone: result.failed > 0 ? 'warning' : 'success',
+      })
+      setPendingDuplicate(null)
+      await queryClient.invalidateQueries({ queryKey: ['schedule-management'] })
+      await queryClient.invalidateQueries({ queryKey: ['schedules'] })
+    },
+    onError: (error) => {
+      const message = friendlySupabaseError(error, 'Gagal menduplikasi jadwal.')
+      setNotice({
+        text: message,
+        title: 'Duplikasi jadwal gagal',
+        tone: 'danger',
+      })
+      notify({ message, title: 'Gagal duplikasi', tone: 'danger' })
+      setPendingDuplicate(null)
+    },
+  })
+
   function updateDraft(key: keyof ScheduleDraft, value: string) {
     setDraft((current) => ({
       ...current,
@@ -234,6 +319,38 @@ export function ScheduleManagementPage() {
     setEditingScheduleId(null)
     setDraft(defaultDraft())
     setIsDrawerOpen(true)
+  }
+
+  function startDuplicateSchedule(schedule: ScheduleAvailability) {
+    if (schedule.status === 'cancelled') {
+      setNotice({
+        text: 'Jadwal yang sudah batal tidak diduplikasi. Buat jadwal baru bila layanan ingin dibuka kembali.',
+        title: 'Jadwal batal',
+        tone: 'warning',
+      })
+      return
+    }
+
+    const targetDate = addDays(schedule.schedule_date, 1)
+    setPendingDuplicate({
+      description: `${schedule.polyclinic_name} bersama ${schedule.doctor_name} akan disalin ke ${formatDateLabel(targetDate)} dengan jam, kuota, dan durasi yang sama.`,
+      sourceLabel: `${schedule.polyclinic_name} · ${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)}`,
+      schedules: [schedule],
+      targetDate,
+      title: 'Duplikat jadwal ke hari berikutnya?',
+    })
+  }
+
+  function startDuplicateSelectedDate() {
+    if (!dateFilter || duplicatableSchedulesOnSelectedDate.length === 0) return
+    const targetDate = addDays(dateFilter, 1)
+    setPendingDuplicate({
+      description: `${duplicatableSchedulesOnSelectedDate.length} jadwal pada ${formatDateLabel(dateFilter)} akan disalin ke tanggal tujuan. Jadwal batal tidak ikut disalin, dan jadwal yang bentrok akan dilewati oleh sistem.`,
+      sourceLabel: formatDateLabel(dateFilter),
+      schedules: duplicatableSchedulesOnSelectedDate,
+      targetDate,
+      title: 'Duplikat jadwal tanggal terpilih?',
+    })
   }
 
   function startEdit(schedule: ScheduleAvailability) {
@@ -320,6 +437,20 @@ export function ScheduleManagementPage() {
     saveMutation.mutate(pendingSave.payload)
   }
 
+  function confirmPendingDuplicate() {
+    if (!pendingDuplicate) return
+    duplicateMutation.mutate({
+      schedules: pendingDuplicate.schedules,
+      targetDate: pendingDuplicate.targetDate,
+    })
+  }
+
+  function updatePendingDuplicateTarget(targetDate: string) {
+    setPendingDuplicate((current) =>
+      current ? { ...current, targetDate } : current,
+    )
+  }
+
   return (
     <AdminLayout>
       <div className="space-y-5">
@@ -329,6 +460,14 @@ export function ScheduleManagementPage() {
               <Button onClick={startCreate}>
                 <Plus size={16} />
                 Buat Jadwal
+              </Button>
+              <Button
+                disabled={!dateFilter || duplicatableSchedulesOnSelectedDate.length === 0}
+                variant="secondary"
+                onClick={startDuplicateSelectedDate}
+              >
+                <Copy size={16} />
+                Duplikat Hari Berikutnya
               </Button>
               <Button
                 variant="secondary"
@@ -383,6 +522,63 @@ export function ScheduleManagementPage() {
             {notice.text}
           </FeedbackBanner>
         ) : null}
+
+        <Card className="p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h3 className="font-black text-slate-950">Kontrol Tanggal</h3>
+              <p className="text-sm text-slate-500">
+                {dateFilter
+                  ? `${selectedDateStats.total} jadwal pada ${formatDateLabel(dateFilter)}, ${selectedDateStats.active} masih aktif.`
+                  : `${schedules.length} jadwal dari seluruh tanggal ditampilkan.`}
+                {dateFilter && selectedDateStats.cancelled > 0
+                  ? ` ${selectedDateStats.cancelled} jadwal batal tidak ikut diduplikasi.`
+                  : ''}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant={dateFilter === today ? 'primary' : 'secondary'}
+                onClick={() => {
+                  setDateFilter(today)
+                  setPage(1)
+                }}
+              >
+                Hari Ini
+              </Button>
+              <Button
+                variant={dateFilter === addDays(today, 1) ? 'primary' : 'secondary'}
+                onClick={() => {
+                  setDateFilter(addDays(today, 1))
+                  setPage(1)
+                }}
+              >
+                Besok
+              </Button>
+              <Button
+                variant={dateFilter === '' ? 'primary' : 'secondary'}
+                onClick={() => {
+                  setDateFilter('')
+                  setPage(1)
+                }}
+              >
+                Semua Tanggal
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSearchTerm('')
+                  setStatusFilter('all')
+                  setDateFilter(today)
+                  setPage(1)
+                }}
+              >
+                <FilterX size={16} />
+                Reset
+              </Button>
+            </div>
+          </div>
+        </Card>
 
         <Card className="overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-3">
@@ -519,6 +715,13 @@ export function ScheduleManagementPage() {
                             Edit
                           </Button>
                           <Button
+                            variant="secondary"
+                            onClick={() => startDuplicateSchedule(schedule)}
+                          >
+                            <Copy size={16} />
+                            Duplikat
+                          </Button>
+                          <Button
                             variant="danger"
                             onClick={() => setPendingDelete(schedule)}
                           >
@@ -596,6 +799,7 @@ export function ScheduleManagementPage() {
                     {filteredPolyclinics.map((polyclinic) => (
                       <option key={polyclinic.id} value={polyclinic.id}>
                         {polyclinic.name}
+                        {polyclinic.is_active ? '' : ' (nonaktif)'}
                       </option>
                     ))}
                   </select>
@@ -608,9 +812,10 @@ export function ScheduleManagementPage() {
                     onChange={(event) => updateDraft('doctor_id', event.target.value)}
                   >
                     <option value="">Pilih dokter</option>
-                    {references?.doctors.map((doctor) => (
+                    {selectableDoctors.map((doctor) => (
                       <option key={doctor.id} value={doctor.id}>
                         {doctor.full_name}
+                        {doctor.is_active ? '' : ' (nonaktif)'}
                       </option>
                     ))}
                   </select>
@@ -737,8 +942,106 @@ export function ScheduleManagementPage() {
             if (pendingDelete) deleteMutation.mutate(pendingDelete.schedule_id)
           }}
         />
+        <DuplicateScheduleDialog
+          isLoading={duplicateMutation.isPending}
+          pendingDuplicate={pendingDuplicate}
+          today={today}
+          onCancel={() => setPendingDuplicate(null)}
+          onConfirm={confirmPendingDuplicate}
+          onTargetDateChange={updatePendingDuplicateTarget}
+        />
       </div>
     </AdminLayout>
+  )
+}
+
+function DuplicateScheduleDialog({
+  isLoading,
+  onCancel,
+  onConfirm,
+  onTargetDateChange,
+  pendingDuplicate,
+  today,
+}: {
+  isLoading: boolean
+  onCancel: () => void
+  onConfirm: () => void
+  onTargetDateChange: (date: string) => void
+  pendingDuplicate: PendingDuplicate | null
+  today: string
+}) {
+  if (!pendingDuplicate) return null
+
+  const canConfirm = pendingDuplicate.schedules.length > 0 && pendingDuplicate.targetDate
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-sm">
+      <button
+        aria-label="Tutup dialog duplikasi"
+        className="absolute inset-0 cursor-default"
+        type="button"
+        onClick={onCancel}
+      />
+      <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-950/10">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+          <div className="flex gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-700">
+              <Copy size={20} />
+            </div>
+            <div>
+              <h2 className="font-black text-slate-950">
+                {pendingDuplicate.title}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-slate-500">
+                {pendingDuplicate.description}
+              </p>
+            </div>
+          </div>
+          <button
+            className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            type="button"
+            onClick={onCancel}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DetailMetric label="Sumber" value={pendingDuplicate.sourceLabel} />
+            <DetailMetric
+              label="Jumlah"
+              value={`${pendingDuplicate.schedules.length} jadwal`}
+            />
+          </div>
+
+          <Field label="Tanggal tujuan">
+            <Input
+              min={today}
+              type="date"
+              value={pendingDuplicate.targetDate}
+              onChange={(event) => onTargetDateChange(event.target.value)}
+            />
+          </Field>
+
+          <div className="rounded-xl bg-slate-50 px-3 py-3 text-sm leading-6 text-slate-600">
+            Jam praktik, dokter, poli, kuota, durasi, dan status akan disalin.
+            Kalau kombinasi dokter, poli, tanggal, dan jam mulai sudah ada,
+            jadwal tersebut akan dilewati.
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 p-4">
+          <Button disabled={isLoading} variant="secondary" onClick={onCancel}>
+            Batal
+          </Button>
+          <Button disabled={isLoading || !canConfirm} onClick={onConfirm}>
+            {isLoading ? <Loader2 className="animate-spin" size={16} /> : <Copy size={16} />}
+            Duplikat
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -850,6 +1153,44 @@ function buildScheduleDeleteDescription(schedule: ScheduleAvailability | null) {
   }
 
   return `Jadwal ${schedule.polyclinic_name} ${schedule.schedule_date} pukul ${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)} akan dihapus permanen karena belum memiliki tiket antrean.`
+}
+
+function buildDuplicateSuccessMessage(result: DuplicateScheduleResult) {
+  if (result.failed === 0) {
+    return `${result.created} jadwal berhasil diduplikasi.`
+  }
+
+  if (result.created === 0) {
+    return 'Tidak ada jadwal yang berhasil diduplikasi. Kemungkinan jadwal tujuan sudah ada atau data referensi tidak aktif.'
+  }
+
+  return `${result.created} jadwal berhasil diduplikasi, ${result.failed} jadwal dilewati karena bentrok atau tidak valid.`
+}
+
+function addDays(dateValue: string, amount: number) {
+  const date = parseDateInputValue(dateValue)
+  date.setDate(date.getDate() + amount)
+  return toDateInputValue(date)
+}
+
+function formatDateLabel(dateValue: string) {
+  return new Intl.DateTimeFormat('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(parseDateInputValue(dateValue))
+}
+
+function parseDateInputValue(dateValue: string) {
+  const [year, month, day] = dateValue.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function toDateInputValue(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function Field({

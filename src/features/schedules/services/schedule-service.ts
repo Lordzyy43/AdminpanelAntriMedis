@@ -20,6 +20,12 @@ export type SchedulePayload = {
   notes?: string | null
 }
 
+export type DuplicateScheduleResult = {
+  created: number
+  failed: number
+  failures: string[]
+}
+
 export async function fetchScheduleManagementRows() {
   const { data, error } = await supabase
     .from('v_schedule_availability')
@@ -99,4 +105,46 @@ export async function deleteSchedule(scheduleId: string) {
   })
 
   if (error) throw error
+}
+
+export async function duplicateSchedules(
+  schedules: ScheduleAvailability[],
+  targetDate: string,
+): Promise<DuplicateScheduleResult> {
+  const schedulesToDuplicate = schedules.filter(
+    (schedule) => schedule.status !== 'cancelled',
+  )
+  const results = await Promise.allSettled(
+    schedulesToDuplicate.map((schedule) =>
+      createSchedule({
+        average_service_minutes: schedule.average_service_minutes,
+        branch_id: schedule.branch_id,
+        doctor_id: schedule.doctor_id,
+        end_time: schedule.end_time.slice(0, 5),
+        notes: `Duplikasi dari jadwal ${schedule.schedule_date}`,
+        polyclinic_id: schedule.polyclinic_id,
+        quota_limit: schedule.quota_limit,
+        schedule_date: targetDate,
+        start_time: schedule.start_time.slice(0, 5),
+        status: schedule.status === 'closed' ? 'closed' : 'open',
+      }),
+    ),
+  )
+
+  const failures = results.flatMap((result, index) => {
+    if (result.status === 'fulfilled') return []
+    const schedule = schedulesToDuplicate[index]
+    const message =
+      result.reason instanceof Error
+        ? result.reason.message
+        : String(result.reason ?? 'Gagal membuat jadwal.')
+
+    return [`${schedule.polyclinic_name} ${schedule.start_time.slice(0, 5)}: ${message}`]
+  })
+
+  return {
+    created: results.filter((result) => result.status === 'fulfilled').length,
+    failed: failures.length,
+    failures,
+  }
 }

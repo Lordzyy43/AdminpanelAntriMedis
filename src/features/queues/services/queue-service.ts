@@ -1,12 +1,14 @@
 import { supabase } from '../../../lib/supabase'
 import type { QueueStatus, QueueTicketDetail, ScheduleAvailability } from '../../../types/queue'
 
-export async function fetchSchedules() {
+export async function fetchSchedules(serviceDate: string) {
   const { data, error } = await supabase
     .from('v_schedule_availability')
     .select('*')
     .eq('status', 'open')
+    .eq('schedule_date', serviceDate)
     .not('queue_session_id', 'is', null)
+    .order('schedule_date', { ascending: true })
     .order('start_time', { ascending: true })
 
   if (error) throw error
