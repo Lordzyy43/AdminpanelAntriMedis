@@ -2,6 +2,7 @@ export type QueueStatus =
   | 'waiting'
   | 'called'
   | 'serving'
+  | 'missed'
   | 'completed'
   | 'skipped'
   | 'cancelled'
@@ -30,6 +31,8 @@ export type ScheduleAvailability = {
   last_number: number
   total_taken: number
   remaining_quota: number
+  is_takeable: boolean
+  availability_reason: string
 }
 
 export type QueueTicketDetail = {
@@ -50,6 +53,8 @@ export type QueueTicketDetail = {
   skipped_at: string | null
   cancelled_at: string | null
   expired_at: string | null
+  missed_count: number
+  remaining_before_me: number | null
   current_number: number
   last_number: number
   schedule_id: string

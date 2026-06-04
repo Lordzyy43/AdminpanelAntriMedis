@@ -28,12 +28,36 @@ export function friendlySupabaseError(error: unknown, fallback: string) {
     return 'Selesaikan, layani, lewati, atau batalkan antrean yang sedang dipanggil sebelum memanggil nomor berikutnya.'
   }
 
+  if (normalized.includes('regular waiting queues must be completed before recalling missed queue')) {
+    return 'Panggil ulang hanya bisa dilakukan setelah antrean menunggu reguler habis.'
+  }
+
+  if (normalized.includes('no missed queue found')) {
+    return 'Tidak ada antrean terlewat yang perlu dipanggil ulang.'
+  }
+
+  if (normalized.includes('queue can only be missed once')) {
+    return 'Nomor ini sudah pernah terlewat. Gunakan Lewati Final, Batalkan, atau Layani.'
+  }
+
+  if (normalized.includes('resolve called or serving queues before closing session')) {
+    return 'Masih ada pasien yang dipanggil atau sedang dilayani. Selesaikan, lewati, atau batalkan dulu sebelum menutup sesi.'
+  }
+
+  if (normalized.includes('queue session is already closed')) {
+    return 'Sesi antrean ini sudah ditutup.'
+  }
+
   if (normalized.includes('invalid queue status transition')) {
     return 'Perubahan status antrean tidak valid. Refresh data lalu lanjutkan sesuai urutan antrean.'
   }
 
   if (normalized.includes('no waiting queue found')) {
     return 'Belum ada pasien yang menunggu pada sesi antrean ini.'
+  }
+
+  if (normalized.includes('queue calling is only allowed after schedule start time')) {
+    return 'Pemanggilan pasien baru bisa dimulai saat jam praktik sudah berjalan.'
   }
 
   if (
@@ -44,7 +68,7 @@ export function friendlySupabaseError(error: unknown, fallback: string) {
   }
 
   if (normalized.includes('queue session not found for schedule')) {
-    return 'Sesi antrean untuk jadwal ini belum terbentuk. Coba buat ulang jadwal atau cek data Supabase.'
+    return 'Sesi antrean untuk jadwal ini belum terbentuk. Coba buat ulang jadwal atau hubungi pengelola sistem.'
   }
 
   if (normalized.includes('doctor is used by schedules')) {
@@ -84,7 +108,7 @@ export function friendlySupabaseError(error: unknown, fallback: string) {
   }
 
   if (normalized.includes('network') || normalized.includes('failed to fetch')) {
-    return 'Koneksi ke Supabase sedang bermasalah. Coba refresh lalu ulangi.'
+    return 'Koneksi sedang bermasalah. Coba refresh lalu ulangi.'
   }
 
   return message || fallback

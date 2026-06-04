@@ -55,7 +55,7 @@ export function LoginPage() {
             AntriMedis Admin
           </p>
           <h1 className="max-w-xl text-4xl font-black leading-tight text-slate-950 lg:text-5xl">
-            Dashboard operasional antrean klinik real-time.
+            Dashboard operasional antrean klinik.
           </h1>
           <p className="mt-5 max-w-lg text-base leading-7 text-slate-600">
             Pantau sesi antrean hari ini, panggil pasien berikutnya, dan ubah
@@ -69,7 +69,7 @@ export function LoginPage() {
           <div className="mb-6">
             <h2 className="text-2xl font-black">Masuk Admin</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Gunakan akun admin yang sudah disiapkan di Supabase.
+              Gunakan akun admin klinik untuk mengelola layanan hari ini.
             </p>
           </div>
 

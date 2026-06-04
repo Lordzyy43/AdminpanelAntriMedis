@@ -4,7 +4,7 @@ Web admin panel untuk mengelola operasional antrean AntriMedis. Admin panel dipa
 
 ## Status
 
-Status per 1 Juni 2026:
+Status per 4 Juni 2026:
 
 - Scope aktif: satu klinik/cabang utama.
 - Role web: admin klinik.
@@ -13,6 +13,7 @@ Status per 1 Juni 2026:
 - CRUD dokter/poli mendukung edit, arsip/nonaktif, dan safe delete lewat RPC.
 - Jadwal mendukung create/update transactional, duplikasi ke hari lain, filter tanggal, dan detail operasional.
 - Antrean dibuat sebagai flow hari-H, bukan booking future.
+- Web title dan package metadata sudah memakai identitas AntriMedis Admin.
 
 ## Fitur Utama
 
@@ -90,6 +91,10 @@ Terakhir dicek:
 - Dev server memberi HTTP 200 di `http://localhost:5173/`.
 
 Catatan: build masih memberi warning chunk Vite lebih dari 500 kB. Ini warning optimasi bundle, bukan error fungsional.
+
+## Dokumen Terkait
+
+- [Collaboration Setup Guide](docs/collaboration_setup.md)
 
 ## Struktur Folder
 
