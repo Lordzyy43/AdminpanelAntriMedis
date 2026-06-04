@@ -42,10 +42,10 @@ export function AdminLayout({ children }: AdminLayoutProps) {
         <div className="absolute bottom-5 left-5 right-5 rounded-2xl bg-slate-950 p-4 text-white">
           <div className="flex items-center gap-2 text-sm font-black">
             <Activity className="text-teal-300" size={17} />
-            Real-time Stream
+            Pemantauan aktif
           </div>
           <p className="mt-2 text-xs font-semibold leading-5 text-slate-300">
-            Status antrean tersinkron dengan aplikasi pasien melalui Supabase.
+            Perubahan antrean otomatis tampil di aplikasi pasien dan panel admin.
           </p>
         </div>
       </aside>

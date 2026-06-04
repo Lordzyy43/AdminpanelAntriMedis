@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
@@ -7,12 +7,14 @@ import {
   Clock3,
   ClipboardList,
   DoorOpen,
+  ListChecks,
   RefreshCw,
+  RotateCcw,
   Stethoscope,
   UsersRound,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 
 import { AdminLayout } from '../../../components/layout/admin-layout'
@@ -21,15 +23,48 @@ import { Card } from '../../../components/ui/card'
 import { PageHeader } from '../../../components/ui/page-header'
 import { StatCard } from '../../../components/ui/stat-card'
 import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table-state'
+import { supabase } from '../../../lib/supabase'
 import type { QueueStatus, QueueTicketDetail, ScheduleAvailability } from '../../../types/queue'
 import type { QueueEventFeedItem } from '../../../types/queue'
 import { fetchDashboardData } from '../services/dashboard-service'
 
 export function DashboardPage() {
+  const queryClient = useQueryClient()
   const dashboardQuery = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchDashboardData,
   })
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('admin-dashboard-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'queue_tickets' },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'queue_sessions' },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'queue_events' },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+        },
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [queryClient])
 
   const data = dashboardQuery.data
   const tickets = useMemo(() => data?.tickets ?? [], [data?.tickets])
@@ -38,7 +73,7 @@ export function DashboardPage() {
 
   const stats = useMemo(() => {
     const activeTickets = tickets.filter((ticket) =>
-      ['waiting', 'called', 'serving'].includes(ticket.status),
+      ['waiting', 'called', 'serving', 'missed'].includes(ticket.status),
     )
     const completed = tickets.filter((ticket) => ticket.status === 'completed')
     const avgWait =
@@ -59,6 +94,7 @@ export function DashboardPage() {
         tickets.length === 0 ? 0 : Math.round((completed.length / tickets.length) * 100),
       completed: completed.length,
       called: tickets.filter((ticket) => ticket.status === 'called').length,
+      missed: tickets.filter((ticket) => ticket.status === 'missed').length,
       serving: tickets.filter((ticket) => ticket.status === 'serving').length,
       totalCapacity: schedules.reduce(
         (total, schedule) => total + schedule.quota_limit,
@@ -165,16 +201,44 @@ export function DashboardPage() {
       .slice(0, 4)
   }, [tickets])
 
+  const operationalSessions = useMemo(
+    () => buildOperationalSessions(schedules, tickets),
+    [schedules, tickets],
+  )
+  const attentionSessions = operationalSessions.filter(
+    (session) =>
+      session.called > 0 ||
+      session.serving > 0 ||
+      session.waiting > 0 ||
+      session.missed > 0,
+  )
+  const readyToRecall = operationalSessions.filter(
+    (session) =>
+      session.waiting === 0 &&
+      session.missed > 0 &&
+      session.called === 0 &&
+      session.serving === 0 &&
+      !session.isClosed &&
+      session.phase !== 'before-start',
+  ).length
+  const drainingSessions = operationalSessions.filter(
+    (session) =>
+      session.phase === 'after-end' &&
+      !session.isClosed &&
+      session.activeTotal > 0,
+  ).length
+
   const recentTickets = [...tickets]
     .sort((first, second) => {
       const priority: Record<QueueStatus, number> = {
         serving: 0,
         called: 1,
-        waiting: 2,
-        completed: 3,
-        skipped: 4,
-        cancelled: 5,
-        expired: 6,
+        missed: 2,
+        waiting: 3,
+        completed: 4,
+        skipped: 5,
+        cancelled: 6,
+        expired: 7,
       }
 
       return priority[first.status] - priority[second.status]
@@ -213,11 +277,71 @@ export function DashboardPage() {
             </>
           }
           description="Pantau ritme operasional harian sebelum masuk ke antrean, jadwal, atau master data."
-          eyebrow="Operational Overview"
+          eyebrow="Ringkasan Hari Ini"
           title="Dashboard Admin"
         />
 
         <ReadinessBanner readiness={readiness} />
+
+        <Card className="overflow-hidden">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="font-black text-slate-950">
+                  Prioritas Operasional
+                </h3>
+                <p className="mt-1 text-sm font-semibold text-slate-500">
+                  Dahulukan sesi yang sedang melayani, punya pasien menunggu, atau perlu panggil ulang.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <MiniSignal
+                  icon={<Activity size={15} />}
+                  label="Sesi perlu aksi"
+                  value={attentionSessions.length}
+                />
+                <MiniSignal
+                  icon={<RotateCcw size={15} />}
+                  label="Siap panggil ulang"
+                  value={readyToRecall}
+                />
+                <MiniSignal
+                  icon={<Clock3 size={15} />}
+                  label="Lewat jam"
+                  value={drainingSessions}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-3 p-4 xl:grid-cols-3">
+            {dashboardQuery.isLoading ? (
+              Array.from({ length: 3 }).map((_, index) => (
+                <div
+                  className="h-56 animate-pulse rounded-xl bg-slate-100"
+                  key={index}
+                />
+              ))
+            ) : operationalSessions.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center xl:col-span-3">
+                <p className="font-black text-slate-900">
+                  Belum ada sesi operasional
+                </p>
+                <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+                  Buat jadwal hari ini agar sesi operasional tampil di sini.
+                </p>
+              </div>
+            ) : (
+              operationalSessions
+                .slice(0, 6)
+                .map((session) => (
+                  <OperationalSessionCard
+                    key={session.scheduleId}
+                    session={session}
+                  />
+                ))
+            )}
+          </div>
+        </Card>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
@@ -228,7 +352,7 @@ export function DashboardPage() {
             value={stats.totalTickets}
           />
           <StatCard
-            helper="Waiting, called, serving"
+            helper={`Menunggu, dipanggil, dilayani, terlewat (${stats.missed})`}
             icon={<Activity size={20} />}
             label="Antrean Aktif"
             tone="blue"
@@ -254,7 +378,7 @@ export function DashboardPage() {
           <div className="grid gap-5 p-5 lg:grid-cols-[1fr_360px] lg:items-center">
             <div>
               <p className="text-sm font-black uppercase tracking-wide text-teal-300">
-                Live Operational Snapshot
+                Kondisi Antrean Saat Ini
               </p>
               <h3 className="mt-2 text-2xl font-black tracking-tight">
                 {stats.activeTickets > 0
@@ -264,7 +388,7 @@ export function DashboardPage() {
               <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-300">
                 {currentTicket
                   ? `Fokus saat ini: ${currentTicket.queue_code} atas nama ${currentTicket.patient_name}.`
-                  : 'Gunakan halaman antrean untuk memanggil pasien berikutnya dan menjaga estimasi waktu tetap sinkron dengan aplikasi pasien.'}
+                  : 'Gunakan halaman antrean untuk memanggil pasien berikutnya dan menjaga perkiraan waktu tetap akurat.'}
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -572,6 +696,225 @@ function ActivityItem({ event }: { event: QueueEventFeedItem }) {
   )
 }
 
+type SessionPhase = 'before-start' | 'operational' | 'after-end'
+
+type OperationalSession = {
+  actionLabel: string
+  actionTone: 'critical' | 'live' | 'recall' | 'quiet' | 'success' | 'warning'
+  activeTotal: number
+  availabilityReason: string
+  branchName: string
+  called: number
+  cancelled: number
+  completed: number
+  currentPatient: string | null
+  currentCode: string | null
+  currentStatus: QueueStatus | null
+  doctorName: string
+  expired: number
+  isClosed: boolean
+  isTakeable: boolean
+  missed: number
+  phase: SessionPhase
+  polyclinicName: string
+  quotaLimit: number
+  queueSessionId: string | null
+  remainingQuota: number
+  scheduleId: string
+  serving: number
+  skipped: number
+  timeLabel: string
+  totalTaken: number
+  waiting: number
+}
+
+function buildOperationalSessions(
+  schedules: ScheduleAvailability[],
+  tickets: QueueTicketDetail[],
+) {
+  return schedules
+    .map((schedule): OperationalSession => {
+      const sessionTickets = tickets.filter(
+        (ticket) => ticket.queue_session_id === schedule.queue_session_id,
+      )
+      const counts = countStatuses(sessionTickets)
+      const current =
+        sessionTickets.find((ticket) => ticket.status === 'serving') ??
+        sessionTickets.find((ticket) => ticket.status === 'called') ??
+        null
+      const phase = getSchedulePhase(
+        schedule.schedule_date,
+        schedule.start_time,
+        schedule.end_time,
+      )
+      const isClosed =
+        schedule.status === 'closed' ||
+        schedule.status === 'cancelled' ||
+        schedule.availability_reason === 'Sesi antrean ditutup'
+      const activeTotal =
+        counts.waiting + counts.called + counts.serving + counts.missed
+      const action = getOperationalAction({
+        activeTotal,
+        called: counts.called,
+        isClosed,
+        missed: counts.missed,
+        phase,
+        serving: counts.serving,
+        totalTaken: schedule.total_taken,
+        waiting: counts.waiting,
+      })
+
+      return {
+        actionLabel: action.label,
+        actionTone: action.tone,
+        activeTotal,
+        availabilityReason: schedule.availability_reason,
+        branchName: schedule.branch_name,
+        called: counts.called,
+        cancelled: counts.cancelled,
+        completed: counts.completed,
+        currentCode: current?.queue_code ?? null,
+        currentPatient: current?.patient_name ?? null,
+        currentStatus: current?.status ?? null,
+        doctorName: schedule.doctor_name,
+        expired: counts.expired,
+        isClosed,
+        isTakeable: schedule.is_takeable,
+        missed: counts.missed,
+        phase,
+        polyclinicName: schedule.polyclinic_name,
+        quotaLimit: schedule.quota_limit,
+        queueSessionId: schedule.queue_session_id,
+        remainingQuota: schedule.remaining_quota,
+        scheduleId: schedule.schedule_id,
+        serving: counts.serving,
+        skipped: counts.skipped,
+        timeLabel: `${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)}`,
+        totalTaken: schedule.total_taken,
+        waiting: counts.waiting,
+      }
+    })
+    .sort(sortOperationalSessions)
+}
+
+function OperationalSessionCard({ session }: { session: OperationalSession }) {
+  const badge = getSessionBadge(session)
+  const accent =
+    session.actionTone === 'critical'
+      ? 'border-rose-200 bg-rose-50 text-rose-700'
+      : session.actionTone === 'recall'
+        ? 'border-violet-200 bg-violet-50 text-violet-700'
+        : session.actionTone === 'live'
+          ? 'border-teal-200 bg-teal-50 text-teal-700'
+          : session.actionTone === 'warning'
+            ? 'border-amber-200 bg-amber-50 text-amber-700'
+            : session.actionTone === 'success'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'border-slate-200 bg-slate-50 text-slate-600'
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-900/5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase text-teal-700">
+            {session.branchName}
+          </p>
+          <h4 className="mt-1 font-black text-slate-950">
+            {session.polyclinicName}
+          </h4>
+          <p className="mt-1 text-sm font-semibold leading-5 text-slate-500">
+            {session.doctorName} - {session.timeLabel}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 rounded-full border px-3 py-1 text-xs font-black ${badge.tone}`}
+        >
+          {badge.label}
+        </span>
+      </div>
+
+      <div className={`mt-4 rounded-2xl border px-3 py-3 ${accent}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase opacity-75">
+              Fokus Operasional
+            </p>
+            <p className="mt-1 text-sm font-black">
+              {session.currentCode
+                ? `${session.currentCode} - ${session.currentPatient}`
+                : session.actionLabel}
+            </p>
+          </div>
+          {session.actionTone === 'recall' ? (
+            <RotateCcw size={20} />
+          ) : session.actionTone === 'success' ? (
+            <CheckCircle2 size={20} />
+          ) : (
+            <ListChecks size={20} />
+          )}
+        </div>
+        {session.phase === 'after-end' && session.activeTotal > 0 ? (
+          <p className="mt-2 text-xs font-bold opacity-80">
+            Lewat jam operasional, admin tetap bisa menghabiskan antrean yang
+            sudah terlanjur masuk.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <SessionMetric label="Menunggu" value={session.waiting} />
+        <SessionMetric label="Terlewat" value={session.missed} />
+        <SessionMetric
+          label="Aktif"
+          value={session.called + session.serving}
+        />
+        <SessionMetric
+          label="Kuota"
+          value={`${session.remainingQuota}/${session.quotaLimit}`}
+        />
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold leading-5 text-slate-500">
+          Final: {session.completed} selesai, {session.skipped} dilewati,{' '}
+          {session.cancelled + session.expired} batal/kedaluwarsa
+        </p>
+        <LinkButton className="shrink-0" to="/queues" variant="secondary">
+          <Activity size={15} />
+          Kelola
+        </LinkButton>
+      </div>
+    </div>
+  )
+}
+
+function MiniSignal({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode
+  label: string
+  value: number
+}) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm shadow-sm shadow-slate-900/5">
+      <span className="text-teal-700">{icon}</span>
+      <span className="font-bold text-slate-500">{label}</span>
+      <span className="font-black text-slate-950">{value}</span>
+    </div>
+  )
+}
+
+function SessionMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-2">
+      <p className="text-xs font-bold text-slate-500">{label}</p>
+      <p className="mt-1 text-lg font-black text-slate-950">{value}</p>
+    </div>
+  )
+}
+
 function ReadinessRow({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
@@ -581,12 +924,141 @@ function ReadinessRow({ label, value }: { label: string; value: number }) {
   )
 }
 
+function countStatuses(tickets: QueueTicketDetail[]) {
+  const initial: Record<QueueStatus, number> = {
+    cancelled: 0,
+    called: 0,
+    completed: 0,
+    expired: 0,
+    missed: 0,
+    serving: 0,
+    skipped: 0,
+    waiting: 0,
+  }
+
+  return tickets.reduce((counts, ticket) => {
+    counts[ticket.status] += 1
+    return counts
+  }, initial)
+}
+
+function getSchedulePhase(
+  scheduleDate: string,
+  startTime: string,
+  endTime: string,
+): SessionPhase {
+  const now = new Date()
+  const start = new Date(`${scheduleDate}T${startTime}`)
+  const end = new Date(`${scheduleDate}T${endTime}`)
+
+  if (now < start) return 'before-start'
+  if (now >= end) return 'after-end'
+  return 'operational'
+}
+
+function getOperationalAction({
+  activeTotal,
+  called,
+  isClosed,
+  missed,
+  phase,
+  serving,
+  totalTaken,
+  waiting,
+}: {
+  activeTotal: number
+  called: number
+  isClosed: boolean
+  missed: number
+  phase: SessionPhase
+  serving: number
+  totalTaken: number
+  waiting: number
+}) {
+  if (isClosed) return { label: 'Sesi ditutup', tone: 'quiet' as const }
+  if (called > 0 || serving > 0) {
+    return { label: 'Selesaikan pasien aktif', tone: 'live' as const }
+  }
+  if (waiting > 0 && phase === 'before-start') {
+    return { label: 'Menunggu jam buka', tone: 'warning' as const }
+  }
+  if (waiting > 0) return { label: 'Panggil berikutnya', tone: 'critical' as const }
+  if (missed > 0) return { label: 'Panggil ulang terlewat', tone: 'recall' as const }
+  if (activeTotal === 0 && totalTaken > 0) {
+    return { label: 'Siap tutup sesi', tone: 'success' as const }
+  }
+  return { label: 'Menunggu pasien', tone: 'quiet' as const }
+}
+
+function sortOperationalSessions(first: OperationalSession, second: OperationalSession) {
+  const firstPriority = getOperationalPriority(first)
+  const secondPriority = getOperationalPriority(second)
+
+  if (firstPriority !== secondPriority) return firstPriority - secondPriority
+  return first.timeLabel.localeCompare(second.timeLabel)
+}
+
+function getOperationalPriority(session: OperationalSession) {
+  if (session.called > 0 || session.serving > 0) return 0
+  if (session.waiting > 0 && session.phase !== 'before-start') return 1
+  if (session.waiting === 0 && session.missed > 0 && !session.isClosed) return 2
+  if (session.phase === 'after-end' && session.activeTotal > 0) return 3
+  if (session.waiting > 0) return 4
+  if (!session.isClosed && session.totalTaken > 0) return 5
+  if (!session.isClosed) return 6
+  return 7
+}
+
+function getSessionBadge(session: OperationalSession) {
+  if (session.isClosed) {
+    return {
+      label: 'Ditutup',
+      tone: 'border-slate-200 bg-slate-100 text-slate-600',
+    }
+  }
+  if (session.phase === 'before-start') {
+    return {
+      label: 'Belum mulai',
+      tone: 'border-amber-200 bg-amber-50 text-amber-700',
+    }
+  }
+  if (session.phase === 'after-end' && session.activeTotal > 0) {
+    return {
+      label: 'Draining',
+      tone: 'border-orange-200 bg-orange-50 text-orange-700',
+    }
+  }
+  if (session.called > 0 || session.serving > 0) {
+    return {
+      label: 'Sedang aktif',
+      tone: 'border-teal-200 bg-teal-50 text-teal-700',
+    }
+  }
+  if (session.waiting > 0) {
+    return {
+      label: 'Ada pasien menunggu',
+      tone: 'border-rose-200 bg-rose-50 text-rose-700',
+    }
+  }
+  if (session.missed > 0) {
+    return {
+      label: 'Perlu panggil ulang',
+      tone: 'border-violet-200 bg-violet-50 text-violet-700',
+    }
+  }
+  return {
+    label: session.isTakeable ? 'Menerima pasien' : 'Siaga',
+    tone: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  }
+}
+
 function StatusBadge({ status }: { status: QueueTicketDetail['status'] }) {
   const labels: Record<QueueStatus, string> = {
     cancelled: 'Dibatalkan',
     called: 'Dipanggil',
     completed: 'Selesai',
     expired: 'Kedaluwarsa',
+    missed: 'Terlewat',
     serving: 'Dilayani',
     skipped: 'Dilewati',
     waiting: 'Menunggu',
@@ -598,6 +1070,8 @@ function StatusBadge({ status }: { status: QueueTicketDetail['status'] }) {
         ? 'bg-amber-50 text-amber-700'
         : status === 'serving'
           ? 'bg-teal-50 text-teal-700'
+          : status === 'missed'
+            ? 'bg-violet-50 text-violet-700'
           : status === 'completed'
             ? 'bg-emerald-50 text-emerald-700'
             : status === 'cancelled'

@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  AlertTriangle,
   CalendarPlus,
   CalendarRange,
+  CheckCircle2,
   Clock3,
   Copy,
   Eye,
@@ -16,7 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { AdminLayout } from '../../../components/layout/admin-layout'
 import { Button } from '../../../components/ui/button'
@@ -32,6 +34,7 @@ import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table
 import { useToast } from '../../../components/ui/use-toast'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
 import { paginateItems } from '../../../lib/pagination'
+import { supabase } from '../../../lib/supabase'
 import type { ScheduleAvailability, ScheduleStatus } from '../../../types/queue'
 import {
   createSchedule,
@@ -85,6 +88,12 @@ const statusOptions: Array<{ value: ScheduleStatus; label: string }> = [
 
 const today = toDateInputValue(new Date())
 const pageSize = 8
+const timePresets = [
+  { label: 'Pagi', start: '08:00', end: '12:00' },
+  { label: 'Siang', start: '13:00', end: '16:00' },
+  { label: 'Sore', start: '15:00', end: '18:00' },
+  { label: 'Malam', start: '18:00', end: '21:00' },
+]
 
 const emptyDraft: ScheduleDraft = {
   branch_id: '',
@@ -125,6 +134,32 @@ export function ScheduleManagementPage() {
     queryFn: fetchScheduleReferences,
   })
 
+  useEffect(() => {
+    const channel = supabase
+      .channel('admin-schedules-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'doctor_schedules' },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['schedule-management'] })
+          void queryClient.invalidateQueries({ queryKey: ['schedules'] })
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'queue_sessions' },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['schedule-management'] })
+          void queryClient.invalidateQueries({ queryKey: ['schedules'] })
+        },
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [queryClient])
+
   const schedules = useMemo(
     () => schedulesQuery.data ?? [],
     [schedulesQuery.data],
@@ -159,6 +194,10 @@ export function ScheduleManagementPage() {
       total: schedulesOnSelectedDate.length,
     }),
     [schedulesOnSelectedDate],
+  )
+  const selectedDateReadiness = useMemo(
+    () => buildDateReadiness(schedulesOnSelectedDate, dateFilter),
+    [dateFilter, schedulesOnSelectedDate],
   )
 
   const duplicatableSchedulesOnSelectedDate = useMemo(
@@ -208,6 +247,15 @@ export function ScheduleManagementPage() {
     references?.doctors.filter(
       (doctor) => doctor.is_active || doctor.id === draft.doctor_id,
     ) ?? []
+  const draftPreview = useMemo(
+    () =>
+      buildDraftPreview({
+        draft,
+        editingScheduleId,
+        schedules,
+      }),
+    [draft, editingScheduleId, schedules],
+  )
 
   function defaultDraft(): ScheduleDraft {
     return {
@@ -481,8 +529,8 @@ export function ScheduleManagementPage() {
               </Button>
             </>
           }
-          description="Atur sesi praktik, kuota, status buka, dan durasi layanan."
-          eyebrow="Schedule Control"
+          description="Atur jadwal praktik, kuota pasien, status layanan, dan durasi pelayanan."
+          eyebrow="Kontrol Jadwal"
           title="Manajemen Jadwal"
         />
 
@@ -579,6 +627,8 @@ export function ScheduleManagementPage() {
             </div>
           </div>
         </Card>
+
+        <DateReadinessPanel readiness={selectedDateReadiness} />
 
         <Card className="overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-3">
@@ -689,10 +739,10 @@ export function ScheduleManagementPage() {
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-black">
-                          {schedule.total_taken}/{schedule.quota_limit}
+                          {schedule.remaining_quota}/{schedule.quota_limit}
                         </p>
                         <p className="text-xs text-slate-500">
-                          sisa {schedule.remaining_quota}
+                          sisa kuota, {schedule.total_taken} sudah masuk
                         </p>
                       </td>
                       <td className="px-4 py-3">
@@ -850,6 +900,22 @@ export function ScheduleManagementPage() {
                 </Field>
               </div>
 
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {timePresets.map((preset) => (
+                  <Button
+                    key={preset.label}
+                    variant="secondary"
+                    onClick={() => {
+                      updateDraft('start_time', preset.start)
+                      updateDraft('end_time', preset.end)
+                    }}
+                  >
+                    <Clock3 size={15} />
+                    {preset.label}
+                  </Button>
+                ))}
+              </div>
+
               <div className="grid gap-3 sm:grid-cols-3">
                 <Field label="Kuota">
                   <Input
@@ -885,6 +951,8 @@ export function ScheduleManagementPage() {
                   </select>
                 </Field>
               </div>
+
+              <ScheduleDraftPreview preview={draftPreview} />
 
               <div className="flex gap-2">
                 <Button className="flex-1" disabled={saveMutation.isPending} type="submit">
@@ -952,6 +1020,126 @@ export function ScheduleManagementPage() {
         />
       </div>
     </AdminLayout>
+  )
+}
+
+type DateReadiness = {
+  description: string
+  icon: ReactNode
+  metrics: Array<{ label: string; value: number | string }>
+  title: string
+  tone: 'neutral' | 'success' | 'warning'
+}
+
+function DateReadinessPanel({ readiness }: { readiness: DateReadiness }) {
+  const tone =
+    readiness.tone === 'success'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : readiness.tone === 'warning'
+        ? 'border-amber-200 bg-amber-50 text-amber-800'
+        : 'border-slate-200 bg-slate-50 text-slate-700'
+
+  return (
+    <Card className={`border p-4 ${tone}`}>
+      <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+        <div className="flex gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/70">
+            {readiness.icon}
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase opacity-70">
+              Readiness Tanggal
+            </p>
+            <h3 className="mt-1 font-black">{readiness.title}</h3>
+            <p className="mt-1 text-sm font-semibold leading-6 opacity-80">
+              {readiness.description}
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
+          {readiness.metrics.map((metric) => (
+            <div className="rounded-xl bg-white/70 px-3 py-2" key={metric.label}>
+              <p className="text-xs font-bold opacity-70">{metric.label}</p>
+              <p className="mt-1 font-black">{metric.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+type DraftPreview = {
+  conflictLabels: string[]
+  estimatedCapacityMinutes: number
+  estimatedSlots: number
+  hasRequiredFields: boolean
+  timeRangeLabel: string
+}
+
+function ScheduleDraftPreview({ preview }: { preview: DraftPreview }) {
+  return (
+    <div
+      className={[
+        'rounded-2xl border px-4 py-3',
+        preview.conflictLabels.length > 0
+          ? 'border-amber-200 bg-amber-50 text-amber-800'
+          : 'border-teal-200 bg-teal-50 text-teal-800',
+      ].join(' ')}
+    >
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5">
+          {preview.conflictLabels.length > 0 ? (
+            <AlertTriangle size={20} />
+          ) : (
+            <CheckCircle2 size={20} />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-black">
+            {preview.conflictLabels.length > 0
+              ? 'Periksa potensi bentrok jadwal'
+              : 'Preview operasional jadwal'}
+          </p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <PreviewMetric label="Jam" value={preview.timeRangeLabel} />
+            <PreviewMetric
+              label="Slot estimasi"
+              value={preview.hasRequiredFields ? preview.estimatedSlots : '-'}
+            />
+            <PreviewMetric
+              label="Total menit"
+              value={
+                preview.hasRequiredFields
+                  ? `${preview.estimatedCapacityMinutes} menit`
+                  : '-'
+              }
+            />
+          </div>
+          {preview.conflictLabels.length > 0 ? (
+            <div className="mt-3 space-y-1 text-sm font-semibold leading-6">
+              {preview.conflictLabels.map((label) => (
+                <p key={label}>{label}</p>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm font-semibold leading-6 opacity-80">
+              Jika status Buka, jadwal ini akan muncul di aplikasi pasien sesuai
+              aturan jam operasional.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PreviewMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-xl bg-white/70 px-3 py-2">
+      <p className="text-xs font-bold opacity-70">{label}</p>
+      <p className="mt-1 font-black">{value}</p>
+    </div>
   )
 }
 
@@ -1165,6 +1353,150 @@ function buildDuplicateSuccessMessage(result: DuplicateScheduleResult) {
   }
 
   return `${result.created} jadwal berhasil diduplikasi, ${result.failed} jadwal dilewati karena bentrok atau tidak valid.`
+}
+
+function buildDateReadiness(
+  schedules: ScheduleAvailability[],
+  dateFilter: string,
+): DateReadiness {
+  const open = schedules.filter((schedule) => schedule.status === 'open').length
+  const full = schedules.filter((schedule) => schedule.status === 'full').length
+  const closed = schedules.filter((schedule) => schedule.status === 'closed').length
+  const cancelled = schedules.filter(
+    (schedule) => schedule.status === 'cancelled',
+  ).length
+  const capacity = schedules.reduce(
+    (total, schedule) => total + schedule.quota_limit,
+    0,
+  )
+  const taken = schedules.reduce((total, schedule) => total + schedule.total_taken, 0)
+  const label = dateFilter ? formatDateLabel(dateFilter) : 'semua tanggal'
+
+  if (schedules.length === 0) {
+    return {
+      description: `Belum ada jadwal untuk ${label}. Buat minimal satu jadwal agar pasien bisa melihat sesi antrean.`,
+      icon: <CalendarPlus size={20} />,
+      metrics: [
+        { label: 'Jadwal', value: 0 },
+        { label: 'Buka', value: 0 },
+        { label: 'Kuota', value: 0 },
+        { label: 'Terambil', value: 0 },
+      ],
+      title: 'Belum siap menerima antrean',
+      tone: 'warning',
+    }
+  }
+
+  if (open === 0) {
+    return {
+      description: `${label} sudah punya jadwal, tetapi belum ada sesi berstatus Buka. Pasien belum bisa mengambil nomor baru.`,
+      icon: <AlertTriangle size={20} />,
+      metrics: [
+        { label: 'Jadwal', value: schedules.length },
+        { label: 'Buka', value: open },
+        { label: 'Tutup', value: closed },
+        { label: 'Batal', value: cancelled },
+      ],
+      title: 'Jadwal belum menerima pasien',
+      tone: 'warning',
+    }
+  }
+
+  return {
+    description: `${label} siap ditampilkan ke pasien. Pantau kuota dan ubah status jika sesi perlu ditutup sementara.`,
+    icon: <CheckCircle2 size={20} />,
+    metrics: [
+      { label: 'Jadwal', value: schedules.length },
+      { label: 'Buka', value: open },
+      { label: 'Penuh', value: full },
+      { label: 'Kuota', value: `${taken}/${capacity}` },
+    ],
+    title: 'Jadwal siap operasional',
+    tone: 'success',
+  }
+}
+
+function buildDraftPreview({
+  draft,
+  editingScheduleId,
+  schedules,
+}: {
+  draft: ScheduleDraft
+  editingScheduleId: string | null
+  schedules: ScheduleAvailability[]
+}): DraftPreview {
+  const startMinutes = timeToMinutes(draft.start_time)
+  const endMinutes = timeToMinutes(draft.end_time)
+  const averageMinutes = Number(draft.average_service_minutes)
+  const quotaLimit = Number(draft.quota_limit)
+  const duration = Math.max(endMinutes - startMinutes, 0)
+  const estimatedSlots =
+    averageMinutes > 0 && duration > 0
+      ? Math.floor(duration / averageMinutes)
+      : 0
+  const hasRequiredFields = Boolean(
+    draft.branch_id &&
+      draft.polyclinic_id &&
+      draft.doctor_id &&
+      draft.schedule_date &&
+      draft.start_time &&
+      draft.end_time &&
+      quotaLimit > 0 &&
+      averageMinutes > 0 &&
+      duration > 0,
+  )
+
+  const conflicts = schedules.filter((schedule) => {
+    if (schedule.schedule_id === editingScheduleId) return false
+    if (schedule.schedule_date !== draft.schedule_date) return false
+    if (schedule.status === 'cancelled') return false
+    if (
+      schedule.doctor_id !== draft.doctor_id &&
+      schedule.polyclinic_id !== draft.polyclinic_id
+    ) {
+      return false
+    }
+
+    return rangesOverlap(
+      startMinutes,
+      endMinutes,
+      timeToMinutes(schedule.start_time.slice(0, 5)),
+      timeToMinutes(schedule.end_time.slice(0, 5)),
+    )
+  })
+
+  const conflictLabels = conflicts.map(
+    (schedule) =>
+      `${schedule.polyclinic_name} - ${schedule.doctor_name} ${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)}`,
+  )
+
+  if (hasRequiredFields && quotaLimit > estimatedSlots) {
+    conflictLabels.push(
+      `Kuota ${quotaLimit} lebih besar dari estimasi slot waktu ${estimatedSlots}.`,
+    )
+  }
+
+  return {
+    conflictLabels,
+    estimatedCapacityMinutes: duration,
+    estimatedSlots,
+    hasRequiredFields,
+    timeRangeLabel: `${draft.start_time || '--:--'}-${draft.end_time || '--:--'}`,
+  }
+}
+
+function rangesOverlap(
+  firstStart: number,
+  firstEnd: number,
+  secondStart: number,
+  secondEnd: number,
+) {
+  return firstStart < secondEnd && secondStart < firstEnd
+}
+
+function timeToMinutes(timeValue: string) {
+  const [hour = 0, minute = 0] = timeValue.split(':').map(Number)
+  return hour * 60 + minute
 }
 
 function addDays(dateValue: string, amount: number) {

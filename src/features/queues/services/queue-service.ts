@@ -40,6 +40,31 @@ export async function callNextQueue(queueSessionId: string) {
   return data as QueueTicketDetail
 }
 
+export async function recallMissedQueue(queueSessionId: string) {
+  const { data, error } = await supabase.rpc('recall_missed_queue', {
+    p_queue_session_id: queueSessionId,
+  })
+
+  if (error) throw error
+  return data as QueueTicketDetail
+}
+
+export type CloseQueueSessionResult = {
+  queue_session_id: string
+  expired_count: number
+  skipped_missed_count?: number
+  closed_at: string
+}
+
+export async function closeQueueSession(queueSessionId: string) {
+  const { data, error } = await supabase.rpc('close_queue_session', {
+    p_queue_session_id: queueSessionId,
+  })
+
+  if (error) throw error
+  return data as CloseQueueSessionResult
+}
+
 export async function updateQueueStatus(
   ticketId: string,
   status: QueueStatus,
@@ -86,6 +111,7 @@ function defaultStatusMessage(status: QueueStatus) {
     waiting: 'Dikembalikan ke status menunggu',
     called: 'Pasien dipanggil oleh petugas',
     serving: 'Pelayanan pasien dimulai',
+    missed: 'Pasien tidak hadir saat dipanggil',
     completed: 'Pelayanan pasien selesai',
     skipped: 'Pasien dilewati oleh petugas',
     cancelled: 'Antrean dibatalkan oleh petugas',
@@ -100,7 +126,10 @@ function isAllowedTransition(currentStatus: QueueStatus, nextStatus: QueueStatus
     return ['skipped', 'cancelled', 'expired'].includes(nextStatus)
   }
   if (currentStatus === 'called') {
-    return ['serving', 'skipped', 'cancelled', 'expired'].includes(nextStatus)
+    return ['serving', 'missed', 'skipped', 'cancelled', 'expired'].includes(nextStatus)
+  }
+  if (currentStatus === 'missed') {
+    return ['skipped', 'cancelled', 'expired'].includes(nextStatus)
   }
   if (currentStatus === 'serving') {
     return ['completed', 'skipped', 'cancelled', 'expired'].includes(nextStatus)
@@ -113,6 +142,7 @@ function queueStatusLabel(status: QueueStatus) {
     waiting: 'Menunggu',
     called: 'Dipanggil',
     serving: 'Dilayani',
+    missed: 'Terlewat',
     completed: 'Selesai',
     skipped: 'Dilewati',
     cancelled: 'Dibatalkan',
