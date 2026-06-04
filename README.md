@@ -44,7 +44,9 @@ Status per 4 Juni 2026:
 
 ## Setup
 
-1. Copy env example:
+1. Copy env example menjadi `.env.local`.
+
+Admin Panel adalah Vite web app, jadi local environment utama dibaca dari `.env.local`. Jangan rename `.env.example`; gunakan copy supaya template tetap tersedia untuk collaborator.
 
 ```powershell
 Copy-Item .env.example .env.local
@@ -55,6 +57,14 @@ Copy-Item .env.example .env.local
 ```txt
 VITE_SUPABASE_URL=https://vicwdxxjaoekppembbvt.supabase.co
 VITE_SUPABASE_ANON_KEY=your_anon_key
+```
+
+Ringkasnya:
+
+```txt
+.env.example  -> template, ikut GitHub
+.env.local    -> wajib untuk Admin Panel lokal, lokal saja
+.env          -> tidak wajib untuk Admin Panel saat ini
 ```
 
 3. Install dependency:

@@ -91,18 +91,39 @@ git clone https://github.com/Lordzyy43/AdminpanelAntriMedis.git
 cd AdminpanelAntriMedis
 ```
 
-Copy env example:
+### Urutan Setup Environment Admin Web
+
+Admin Panel adalah Vite web app. Vite membaca environment variable dari `.env.local` saat development lokal.
+
+Urutan yang benar:
+
+1. Biarkan `.env.example` tetap ada sebagai template.
+2. Copy `.env.example` menjadi `.env.local`.
+3. Isi `.env.local` dengan Supabase URL dan anon key asli.
+4. Jangan commit `.env.local`.
+
+Perbedaan file environment:
+
+```txt
+.env.example  -> template untuk collaborator, boleh commit
+.env.local    -> env asli untuk Admin Panel lokal, wajib ada lokal, jangan commit
+.env          -> tidak wajib untuk Admin Panel saat ini
+```
+
+Copy template menjadi `.env.local`:
 
 ```powershell
 Copy-Item .env.example .env.local
 ```
 
-Isi `.env.local`:
+Isi `.env.local` dengan nilai asli:
 
 ```txt
 VITE_SUPABASE_URL=https://vicwdxxjaoekppembbvt.supabase.co
 VITE_SUPABASE_ANON_KEY=isi_anon_or_publishable_key_dari_supabase
 ```
+
+Jangan rename `.env.example` menjadi `.env.local`. Gunakan copy, supaya `.env.example` tetap tersedia di GitHub sebagai panduan collaborator.
 
 Install dependency:
 
@@ -204,6 +225,7 @@ File `.env.example` boleh diubah jika hanya menambah nama variable tanpa nilai s
 Jika Admin Panel tidak bisa login:
 
 - pastikan `.env.local` sudah ada,
+- pastikan `.env.local` dibuat dari copy `.env.example`, bukan dengan rename template,
 - pastikan `VITE_SUPABASE_URL` benar,
 - pastikan `VITE_SUPABASE_ANON_KEY` berasal dari project Supabase yang sama,
 - pastikan akun admin masih ada dan punya role admin.
