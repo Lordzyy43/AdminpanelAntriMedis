@@ -76,20 +76,9 @@ export function DashboardPage() {
       ['waiting', 'called', 'serving', 'missed'].includes(ticket.status),
     )
     const completed = tickets.filter((ticket) => ticket.status === 'completed')
-    const avgWait =
-      tickets.length === 0
-        ? 0
-        : Math.round(
-            tickets.reduce(
-              (total, ticket) => total + ticket.estimated_wait_minutes,
-              0,
-            ) / tickets.length,
-          )
-
     return {
       activeSchedules: schedules.filter((schedule) => schedule.status === 'open').length,
       activeTickets: activeTickets.length,
-      avgWait,
       completionRate:
         tickets.length === 0 ? 0 : Math.round((completed.length / tickets.length) * 100),
       completed: completed.length,
@@ -366,11 +355,11 @@ export function DashboardPage() {
             value={stats.activeSchedules}
           />
           <StatCard
-            helper="Estimasi rata-rata"
+            helper="Nomor sedang dipanggil/dilayani"
             icon={<Clock3 size={20} />}
-            label="Rata Tunggu"
+            label="Nomor Saat Ini"
             tone="emerald"
-            value={`${stats.avgWait}m`}
+            value={currentTicket?.queue_code ?? '-'}
           />
         </div>
 
@@ -388,7 +377,7 @@ export function DashboardPage() {
               <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-300">
                 {currentTicket
                   ? `Fokus saat ini: ${currentTicket.queue_code} atas nama ${currentTicket.patient_name}.`
-                  : 'Gunakan halaman antrean untuk memanggil pasien berikutnya dan menjaga perkiraan waktu tetap akurat.'}
+                  : 'Gunakan halaman antrean untuk memanggil pasien berikutnya sesuai urutan.'}
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -411,9 +400,9 @@ export function DashboardPage() {
             value={`${capacityUsage}%`}
           />
           <InsightCard
-            helper="Berbasis estimasi tiket aktif dan selesai"
-            label="Rata-rata Tunggu"
-            value={`${stats.avgWait} menit`}
+            helper="Pasien waiting yang belum dipanggil"
+            label="Antrean Menunggu"
+            value={String(stats.waiting)}
           />
         </div>
 
@@ -434,7 +423,7 @@ export function DashboardPage() {
                     <th className="px-4 py-3">Nomor</th>
                     <th className="px-4 py-3">Pasien</th>
                     <th className="px-4 py-3">Poli</th>
-                    <th className="px-4 py-3">Estimasi</th>
+                    <th className="px-4 py-3">Posisi</th>
                     <th className="px-4 py-3">Status</th>
                   </tr>
                 </thead>
@@ -462,7 +451,7 @@ export function DashboardPage() {
                           {ticket.polyclinic_name}
                         </td>
                         <td className="px-4 py-3 font-bold">
-                          {ticket.estimated_wait_minutes} menit
+                          {remainingBeforeLabel(ticket)}
                         </td>
                         <td className="px-4 py-3">
                           <StatusBadge status={ticket.status} />
@@ -688,6 +677,7 @@ function ActivityItem({ event }: { event: QueueEventFeedItem }) {
       <p className="mt-1 text-xs font-semibold text-slate-500">
         {event.message ?? 'Status antrean diperbarui'} -{' '}
         {new Date(event.created_at).toLocaleTimeString('id-ID', {
+          hour12: false,
           hour: '2-digit',
           minute: '2-digit',
         })}
@@ -1007,6 +997,17 @@ function getOperationalPriority(session: OperationalSession) {
   if (!session.isClosed && session.totalTaken > 0) return 5
   if (!session.isClosed) return 6
   return 7
+}
+
+function remainingBeforeLabel(ticket: QueueTicketDetail) {
+  if (ticket.status === 'called') return 'Giliran sekarang'
+  if (ticket.status === 'serving') return 'Sedang dilayani'
+  const remaining = Math.max(
+    ticket.remaining_before_me ?? ticket.queue_number - ticket.current_number - 1,
+    0,
+  )
+  if (remaining === 0) return 'Siap dipanggil'
+  return `${remaining} antrean di depan`
 }
 
 function getSessionBadge(session: OperationalSession) {

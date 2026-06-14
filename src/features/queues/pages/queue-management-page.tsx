@@ -783,7 +783,7 @@ export function QueueManagementPage() {
                   <th className="px-4 py-3">Nomor</th>
                   <th className="px-4 py-3">Pasien</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Estimasi</th>
+                  <th className="px-4 py-3">Posisi</th>
                   <th className="px-4 py-3 text-right">Aksi</th>
                 </tr>
               </thead>
@@ -824,7 +824,7 @@ export function QueueManagementPage() {
                         <StatusBadge status={ticket.status} />
                       </td>
                       <td className="px-4 py-3 font-bold">
-                        {waitEstimateLabel(ticket)}
+                        Saat ini {calledNumberLabel(ticket)}
                         <p className="text-xs font-semibold text-slate-500">
                           {remainingBeforeLabel(ticket)}
                         </p>
@@ -1369,10 +1369,7 @@ function TicketDetailPanel({
           <DetailMetric label="Nomor pasien" value={ticket.queue_number} />
           <DetailMetric label="Nomor dipanggil" value={ticket.current_number} />
           <DetailMetric label="Sisa sebelum pasien" value={remaining} />
-            <DetailMetric
-              label="Perkiraan tunggu"
-              value={waitEstimateLabel(ticket)}
-            />
+          <DetailMetric label="Nomor pengguna" value={ticket.queue_code} />
         </div>
       </Card>
 
@@ -1550,6 +1547,7 @@ function actorLabel(event: QueueTicketTimelineItem) {
 function formatDateTimeLabel(value: string) {
   return new Intl.DateTimeFormat('id-ID', {
     day: '2-digit',
+    hour12: false,
     hour: '2-digit',
     minute: '2-digit',
     month: 'short',
@@ -1697,7 +1695,7 @@ function buildOperatorDecision({
       description:
         schedulePhase === 'after-end'
           ? 'Jam praktik sudah lewat, tetapi pasien yang sudah mengambil nomor tetap perlu diselesaikan.'
-          : 'Panggil pasien menunggu paling awal untuk menjaga urutan dan perkiraan waktu tetap akurat.',
+          : 'Panggil pasien menunggu paling awal untuk menjaga urutan nomor tetap akurat.',
       details,
       icon: <Megaphone size={20} />,
       title: 'Panggil pasien berikutnya',
@@ -1763,11 +1761,9 @@ function remainingBeforeLabel(ticket: QueueTicketDetail) {
   return `${remaining} antrean aktif sebelum pasien`
 }
 
-function waitEstimateLabel(ticket: QueueTicketDetail) {
-  if (ticket.status === 'called') return 'Dipanggil'
-  if (ticket.status === 'serving') return 'Dilayani'
-  if (ticket.estimated_wait_minutes <= 0) return 'Segera'
-  return `~ ${ticket.estimated_wait_minutes} menit`
+function calledNumberLabel(ticket: QueueTicketDetail) {
+  if (ticket.current_number <= 0) return '-'
+  return `${ticket.queue_prefix}${ticket.current_number.toString().padStart(3, '0')}`
 }
 
 function closeSessionSuccessMessage(result: CloseQueueSessionResult) {
