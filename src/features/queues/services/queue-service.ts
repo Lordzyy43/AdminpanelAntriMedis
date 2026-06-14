@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabase'
 import type {
+  Polyclinic,
   QueueStatus,
   QueueTicketDetail,
   QueueTicketTimelineItem,
@@ -18,6 +19,16 @@ export async function fetchSchedules(serviceDate: string) {
 
   if (error) throw error
   return data as ScheduleAvailability[]
+}
+
+export async function fetchPolyclinics() {
+  const { data, error } = await supabase
+    .from('polyclinics')
+    .select('id, name, is_active')
+    .order('name', { ascending: true })
+
+  if (error) throw error
+  return data as Polyclinic[]
 }
 
 export async function fetchQueueTickets(queueSessionId: string) {

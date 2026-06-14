@@ -265,7 +265,7 @@ export function DashboardPage() {
               </Button>
             </>
           }
-          description="Pantau ritme operasional harian sebelum masuk ke antrean, jadwal, atau master data."
+          description="Ringkasan operasional hari ini."
           eyebrow="Ringkasan Hari Ini"
           title="Dashboard Admin"
         />
@@ -279,9 +279,6 @@ export function DashboardPage() {
                 <h3 className="font-black text-slate-950">
                   Prioritas Operasional
                 </h3>
-                <p className="mt-1 text-sm font-semibold text-slate-500">
-                  Dahulukan sesi yang sedang melayani, punya pasien menunggu, atau perlu panggil ulang.
-                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <MiniSignal
@@ -315,9 +312,6 @@ export function DashboardPage() {
                 <p className="font-black text-slate-900">
                   Belum ada sesi operasional
                 </p>
-                <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
-                  Buat jadwal hari ini agar sesi operasional tampil di sini.
-                </p>
               </div>
             ) : (
               operationalSessions
@@ -334,28 +328,28 @@ export function DashboardPage() {
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
-            helper="Tiket yang masuk hari ini"
+            helper="Hari ini"
             icon={<UsersRound size={20} />}
             label="Total Pasien"
             tone="teal"
             value={stats.totalTickets}
           />
           <StatCard
-            helper={`Menunggu, dipanggil, dilayani, terlewat (${stats.missed})`}
+            helper={`Terlewat ${stats.missed}`}
             icon={<Activity size={20} />}
             label="Antrean Aktif"
             tone="blue"
             value={stats.activeTickets}
           />
           <StatCard
-            helper="Jadwal open hari ini"
+            helper="Open"
             icon={<CalendarClock size={20} />}
             label="Jadwal Aktif"
             tone="amber"
             value={stats.activeSchedules}
           />
           <StatCard
-            helper="Nomor sedang dipanggil/dilayani"
+            helper="Dipanggil/dilayani"
             icon={<Clock3 size={20} />}
             label="Nomor Saat Ini"
             tone="emerald"
@@ -376,8 +370,8 @@ export function DashboardPage() {
               </h3>
               <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-300">
                 {currentTicket
-                  ? `Fokus saat ini: ${currentTicket.queue_code} atas nama ${currentTicket.patient_name}.`
-                  : 'Gunakan halaman antrean untuk memanggil pasien berikutnya sesuai urutan.'}
+                  ? `${currentTicket.queue_code} - ${currentTicket.patient_name}`
+                  : 'Tidak ada nomor aktif.'}
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -390,17 +384,17 @@ export function DashboardPage() {
 
         <div className="grid gap-3 md:grid-cols-3">
           <InsightCard
-            helper={`${stats.completed} dari ${stats.totalTickets} tiket hari ini`}
+            helper={`${stats.completed}/${stats.totalTickets} tiket`}
             label="Completion Rate"
             value={`${stats.completionRate}%`}
           />
           <InsightCard
-            helper={`${stats.totalTickets} dari ${stats.totalCapacity} kuota terpakai`}
+            helper={`${stats.totalTickets}/${stats.totalCapacity} kuota`}
             label="Pemakaian Kapasitas"
             value={`${capacityUsage}%`}
           />
           <InsightCard
-            helper="Pasien waiting yang belum dipanggil"
+            helper="Belum dipanggil"
             label="Antrean Menunggu"
             value={String(stats.waiting)}
           />
@@ -433,7 +427,7 @@ export function DashboardPage() {
                   ) : recentTickets.length === 0 ? (
                     <TableEmptyState
                       colSpan={5}
-                      description="Antrean akan muncul otomatis saat pasien mengambil nomor dari aplikasi."
+                      description="Menunggu pasien mengambil nomor."
                       title="Belum ada antrean hari ini"
                     />
                   ) : (
@@ -479,7 +473,7 @@ export function DashboardPage() {
                     />
                   ))
                 ) : activityItems.length === 0 ? (
-                  <p className="text-sm leading-6 text-slate-500">
+                  <p className="text-sm font-semibold text-slate-500">
                     Belum ada aktivitas antrean hari ini.
                   </p>
                 ) : (
@@ -518,7 +512,9 @@ export function DashboardPage() {
               </div>
               <div className="space-y-3">
                 {busiestPolyclinics.length === 0 ? (
-                  <p className="text-sm text-slate-500">Belum ada data pasien.</p>
+                  <p className="text-sm font-semibold text-slate-500">
+                    Belum ada data pasien.
+                  </p>
                 ) : (
                   busiestPolyclinics.map((polyclinic) => (
                     <div

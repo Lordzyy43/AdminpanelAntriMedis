@@ -52,6 +52,8 @@ export function FormDrawer({
             ) : null}
           </div>
           <button
+            aria-label="Tutup drawer"
+            title="Tutup drawer"
             className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             type="button"
             onClick={onClose}

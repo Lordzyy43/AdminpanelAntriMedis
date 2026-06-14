@@ -54,6 +54,8 @@ export function ConfirmDialog({
             </div>
           </div>
           <button
+            aria-label="Tutup dialog"
+            title="Tutup dialog"
             className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             type="button"
             onClick={onCancel}

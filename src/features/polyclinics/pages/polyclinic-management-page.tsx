@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import {
   Building2,
+  Eye,
   Loader2,
   Pencil,
   Plus,
@@ -72,6 +73,7 @@ export function PolyclinicManagementPage() {
   const { notify } = useToast()
   const [draft, setDraft] = useState<PolyclinicDraft>(emptyPolyclinicDraft)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
+  const [detailPolyclinic, setDetailPolyclinic] = useState<Polyclinic | null>(null)
   const [editingPolyclinicId, setEditingPolyclinicId] = useState<string | null>(
     null,
   )
@@ -382,12 +384,32 @@ export function PolyclinicManagementPage() {
           loading={masterDataQuery.isLoading}
           onCreate={startCreate}
           onDelete={setPendingDelete}
+          onDetail={setDetailPolyclinic}
           onEdit={startEdit}
           onPageChange={setPage}
           pageSize={pageSize}
           polyclinics={paginatedPolyclinics.items}
           total={polyclinics.length}
         />
+
+        <FormDrawer
+          description="Ringkasan status poli, cabang, kode, dan prefix antrean."
+          open={Boolean(detailPolyclinic)}
+          title="Detail Poli"
+          onClose={() => setDetailPolyclinic(null)}
+        >
+          {detailPolyclinic ? (
+            <PolyclinicDetailPanel
+              branchName={branchNameById.get(detailPolyclinic.branch_id) ?? '-'}
+              polyclinic={detailPolyclinic}
+              onEdit={() => {
+                const selected = detailPolyclinic
+                setDetailPolyclinic(null)
+                startEdit(selected)
+              }}
+            />
+          ) : null}
+        </FormDrawer>
 
         <FormDrawer
           description="Atur nama layanan, kode internal, prefix nomor antrean, dan status poli."
@@ -540,6 +562,7 @@ function PolyclinicTable({
   loading,
   onCreate,
   onDelete,
+  onDetail,
   onEdit,
   onPageChange,
   pageSize,
@@ -552,6 +575,7 @@ function PolyclinicTable({
   loading: boolean
   onCreate: () => void
   onDelete: (polyclinic: Polyclinic) => void
+  onDetail: (polyclinic: Polyclinic) => void
   onEdit: (polyclinic: Polyclinic) => void
   onPageChange: (page: number) => void
   pageSize: number
@@ -615,6 +639,10 @@ function PolyclinicTable({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
+                      <Button variant="ghost" onClick={() => onDetail(polyclinic)}>
+                        <Eye size={16} />
+                        Detail
+                      </Button>
                       <Button variant="secondary" onClick={() => onEdit(polyclinic)}>
                         <Pencil size={16} />
                         Edit
@@ -641,6 +669,70 @@ function PolyclinicTable({
         totalItems={filteredTotal}
       />
     </Card>
+  )
+}
+
+function PolyclinicDetailPanel({
+  branchName,
+  onEdit,
+  polyclinic,
+}: {
+  branchName: string
+  onEdit: () => void
+  polyclinic: Polyclinic
+}) {
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-black uppercase tracking-wide text-teal-700">
+              {branchName}
+            </p>
+            <h3 className="mt-1 text-xl font-black text-slate-950">
+              {polyclinic.name}
+            </h3>
+            <p className="mt-1 text-sm font-semibold text-slate-500">
+              {polyclinic.description ?? 'Belum ada deskripsi'}
+            </p>
+          </div>
+          <ActiveBadge active={polyclinic.is_active} />
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="mb-3 font-black text-slate-950">Identitas Poli</h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DetailMetric label="Kode" value={polyclinic.code} />
+          <DetailMetric label="Prefix Antrean" value={polyclinic.queue_prefix} />
+          <DetailMetric label="Cabang" value={branchName} />
+          <DetailMetric
+            label="Status"
+            value={polyclinic.is_active ? 'Aktif' : 'Nonaktif'}
+          />
+        </div>
+      </Card>
+
+      <Button className="w-full" variant="secondary" onClick={onEdit}>
+        <Pencil size={16} />
+        Edit Poli
+      </Button>
+    </div>
+  )
+}
+
+function DetailMetric({
+  label,
+  value,
+}: {
+  label: string
+  value: number | string
+}) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-3">
+      <p className="text-xs font-bold text-slate-500">{label}</p>
+      <p className="mt-1 font-black text-slate-950">{value}</p>
+    </div>
   )
 }
 

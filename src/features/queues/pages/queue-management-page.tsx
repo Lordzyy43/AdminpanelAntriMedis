@@ -34,6 +34,7 @@ import { useToast } from '../../../components/ui/use-toast'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
 import { paginateItems } from '../../../lib/pagination'
 import { supabase } from '../../../lib/supabase'
+import { playQueueCallAudio, primeQueueCallAudio } from '../../../lib/queue-call-audio'
 import type {
   QueueStatus,
   ScheduleAvailability,
@@ -305,12 +306,21 @@ export function QueueManagementPage() {
 
   const callNextMutation = useMutation({
     mutationFn: () => callNextQueue(activeSessionId!),
-    onSuccess: () => {
+    onSuccess: async () => {
       notify({
         message: 'Pasien berikutnya berhasil dipanggil.',
         title: 'Antrean diperbarui',
         tone: 'success',
       })
+      const played = await playQueueCallAudio()
+      if (!played) {
+        notify({
+          message:
+            'Audio panggilan tidak dapat diputar di browser ini. Gunakan volume perangkat atau mode display sebagai cadangan.',
+          title: 'Audio panggilan tidak tersedia',
+          tone: 'warning',
+        })
+      }
       setPendingAction(null)
       void ticketsQuery.refetch()
       void schedulesQuery.refetch()
@@ -418,6 +428,7 @@ export function QueueManagementPage() {
     if (!pendingAction) return
 
     if (pendingAction.type === 'call-next') {
+      void primeQueueCallAudio()
       callNextMutation.mutate()
       return
     }
@@ -458,7 +469,10 @@ export function QueueManagementPage() {
             <>
             <Button
               disabled={!canCallNext || callNextMutation.isPending}
-              onClick={() => openPendingAction({ type: 'call-next' })}
+              onClick={() => {
+                void primeQueueCallAudio()
+                openPendingAction({ type: 'call-next' })
+              }}
             >
               {callNextMutation.isPending ? (
                 <Loader2 className="animate-spin" size={16} />

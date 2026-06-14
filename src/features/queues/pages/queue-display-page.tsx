@@ -1,28 +1,50 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Clock3, RefreshCw } from 'lucide-react'
-import { useEffect, useMemo } from 'react'
+import { Activity, Clock3, Maximize2, Minimize2, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { Button } from '../../../components/ui/button'
 import { supabase } from '../../../lib/supabase'
-import type { QueueStatus, QueueTicketDetail, ScheduleAvailability } from '../../../types/queue'
-import { fetchQueueTickets, fetchSchedules } from '../services/queue-service'
+import type {
+  Polyclinic,
+  QueueStatus,
+  QueueTicketDetail,
+  ScheduleAvailability,
+} from '../../../types/queue'
+import { fetchPolyclinics, fetchQueueTickets, fetchSchedules } from '../services/queue-service'
 
 const today = toDateInputValue(new Date())
+const storageKey = 'queue-display-polyclinic-id'
 
 export function QueueDisplayPage() {
   const queryClient = useQueryClient()
+  const [selectedPolyclinicId, setSelectedPolyclinicId] = useState<string>('')
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  const polyclinicsQuery = useQuery({
+    queryKey: ['queue-display-polyclinics'],
+    queryFn: fetchPolyclinics,
+  })
   const schedulesQuery = useQuery({
     queryKey: ['queue-display-schedules', today],
     queryFn: () => fetchSchedules(today),
   })
 
+  const polyclinics = useMemo(
+    () => polyclinicsQuery.data ?? [],
+    [polyclinicsQuery.data],
+  )
   const schedules = useMemo(
     () => schedulesQuery.data ?? [],
     [schedulesQuery.data],
   )
+  const selectedPolyclinic = useMemo(
+    (): Polyclinic | null =>
+      polyclinics.find((polyclinic) => polyclinic.id === selectedPolyclinicId) ?? null,
+    [polyclinics, selectedPolyclinicId],
+  )
   const activeSchedule = useMemo(
-    () => pickDisplaySchedule(schedules),
-    [schedules],
+    () => pickDisplaySchedule(schedules, selectedPolyclinicId),
+    [schedules, selectedPolyclinicId],
   )
   const ticketsQuery = useQuery({
     queryKey: ['queue-display-tickets', activeSchedule?.queue_session_id],
@@ -32,6 +54,43 @@ export function QueueDisplayPage() {
   const tickets = useMemo(() => ticketsQuery.data ?? [], [ticketsQuery.data])
   const currentTicket = useMemo(() => pickCurrentTicket(tickets), [tickets])
   const waitingCount = tickets.filter((ticket) => ticket.status === 'waiting').length
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const saved = window.localStorage.getItem(storageKey)
+    if (saved && !selectedPolyclinicId) {
+      setSelectedPolyclinicId(saved)
+    }
+  }, [selectedPolyclinicId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (selectedPolyclinicId) {
+      window.localStorage.setItem(storageKey, selectedPolyclinicId)
+    }
+  }, [selectedPolyclinicId])
+
+  useEffect(() => {
+    if (selectedPolyclinicId || polyclinics.length === 0) return
+    const defaultPolyclinic =
+      polyclinics.find((polyclinic) => polyclinic.is_active) ?? polyclinics[0]
+    if (defaultPolyclinic) {
+      setSelectedPolyclinicId(defaultPolyclinic.id)
+    }
+  }, [polyclinics, selectedPolyclinicId])
+
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement))
+    }
+
+    syncFullscreenState()
+    document.addEventListener('fullscreenchange', syncFullscreenState)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState)
+    }
+  }, [])
 
   useEffect(() => {
     const channel = supabase
@@ -65,8 +124,21 @@ export function QueueDisplayPage() {
     }
   }, [queryClient])
 
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+        return
+      }
+
+      await document.documentElement.requestFullscreen()
+    } catch {
+      // Browser fullscreen can be blocked by policy; the display still works in windowed mode.
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
+    <main className="min-h-screen overflow-hidden bg-slate-950 text-white">
       <div className="flex min-h-screen flex-col px-10 py-8">
         <header className="flex items-center justify-between gap-6">
           <div>
@@ -78,6 +150,24 @@ export function QueueDisplayPage() {
             </h1>
           </div>
           <div className="flex items-center gap-3">
+            <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+              <p className="text-[11px] font-black uppercase text-slate-300">
+                Poli Display
+              </p>
+              <select
+                className="mt-1 w-[240px] rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm font-bold text-white outline-none"
+                value={selectedPolyclinicId}
+                onChange={(event) => setSelectedPolyclinicId(event.target.value)}
+              >
+                <option value="">Pilih poli</option>
+                {polyclinics.map((polyclinic) => (
+                  <option key={polyclinic.id} value={polyclinic.id}>
+                    {polyclinic.name}
+                    {polyclinic.is_active ? '' : ' (nonaktif)'}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-right">
               <p className="text-xs font-black uppercase text-slate-300">
                 Hari Ini
@@ -93,6 +183,17 @@ export function QueueDisplayPage() {
             >
               <RefreshCw size={16} />
               Refresh
+            </Button>
+            <Button
+              aria-label={isFullscreen ? 'Keluar dari layar penuh' : 'Masuk ke layar penuh'}
+              title={isFullscreen ? 'Keluar dari layar penuh' : 'Masuk ke layar penuh'}
+              variant="secondary"
+              onClick={() => {
+                void toggleFullscreen()
+              }}
+            >
+              {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              {isFullscreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
             </Button>
           </div>
         </header>
@@ -132,8 +233,15 @@ export function QueueDisplayPage() {
                 Poli
               </p>
               <h2 className="mt-2 text-4xl font-black leading-tight">
-                {activeSchedule?.polyclinic_name ?? 'Belum ada sesi'}
+                {selectedPolyclinic?.name ?? activeSchedule?.polyclinic_name ?? 'Belum ada sesi'}
               </h2>
+              <p className="mt-2 text-sm font-semibold text-slate-300">
+                {selectedPolyclinic
+                  ? selectedPolyclinic.is_active
+                    ? 'Aktif'
+                    : 'Tidak aktif'
+                  : 'Belum dipilih'}
+              </p>
               <p className="mt-5 text-sm font-black uppercase tracking-wide text-slate-300">
                 Dokter
               </p>
@@ -159,9 +267,11 @@ export function QueueDisplayPage() {
                   ? currentTicket.status === 'serving'
                     ? 'Sedang dilayani'
                     : 'Sedang dipanggil'
-                  : schedulesQuery.isLoading || ticketsQuery.isLoading
+                  : schedulesQuery.isLoading || ticketsQuery.isLoading || polyclinicsQuery.isLoading
                     ? 'Memuat data'
-                    : 'Menunggu pemanggilan'}
+                    : activeSchedule
+                      ? 'Menunggu pemanggilan'
+                      : 'Belum ada sesi untuk poli ini'}
               </p>
             </div>
           </aside>
@@ -186,11 +296,18 @@ function DisplayMetric({
   )
 }
 
-function pickDisplaySchedule(schedules: ScheduleAvailability[]) {
+function pickDisplaySchedule(
+  schedules: ScheduleAvailability[],
+  polyclinicId: string,
+) {
+  const scopedSchedules = polyclinicId
+    ? schedules.filter((schedule) => schedule.polyclinic_id === polyclinicId)
+    : schedules
+
   return (
-    schedules.find((schedule) => schedule.queue_session_id && schedule.current_number > 0) ??
-    schedules.find((schedule) => schedule.queue_session_id) ??
-    null
+    scopedSchedules.find(
+      (schedule) => schedule.queue_session_id && schedule.current_number > 0,
+    ) ?? scopedSchedules.find((schedule) => schedule.queue_session_id) ?? null
   )
 }
 
