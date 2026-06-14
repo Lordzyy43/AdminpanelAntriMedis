@@ -79,6 +79,8 @@ type PendingDuplicate = {
   title: string
 }
 
+type ScheduleTimeMode = 'all' | 'past' | 'today' | 'upcoming'
+
 const statusOptions: Array<{ value: ScheduleStatus; label: string }> = [
   { value: 'open', label: 'Buka' },
   { value: 'closed', label: 'Tutup' },
@@ -120,9 +122,10 @@ export function ScheduleManagementPage() {
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null)
   const [pendingSave, setPendingSave] = useState<PendingScheduleSave | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
-  const [dateFilter, setDateFilter] = useState(today)
+  const [dateFilter, setDateFilter] = useState('')
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<ScheduleStatus | 'all'>('all')
+  const [timeMode, setTimeMode] = useState<ScheduleTimeMode>('today')
 
   const schedulesQuery = useQuery({
     queryKey: ['schedule-management'],
@@ -175,37 +178,40 @@ export function ScheduleManagementPage() {
     }
   }, [schedules])
 
-  const schedulesOnSelectedDate = useMemo(
+  const scopedSchedules = useMemo(
     () =>
-      dateFilter
-        ? schedules.filter((schedule) => schedule.schedule_date === dateFilter)
-        : [],
-    [dateFilter, schedules],
+      schedules.filter(
+        (schedule) =>
+          matchesScheduleTimeMode(schedule, timeMode) &&
+          (!dateFilter || schedule.schedule_date === dateFilter),
+      ),
+    [dateFilter, schedules, timeMode],
   )
 
   const selectedDateStats = useMemo(
     () => ({
-      active: schedulesOnSelectedDate.filter(
+      active: scopedSchedules.filter(
         (schedule) => schedule.status === 'open' || schedule.status === 'full',
       ).length,
-      cancelled: schedulesOnSelectedDate.filter(
+      cancelled: scopedSchedules.filter(
         (schedule) => schedule.status === 'cancelled',
       ).length,
-      total: schedulesOnSelectedDate.length,
+      total: scopedSchedules.length,
     }),
-    [schedulesOnSelectedDate],
+    [scopedSchedules],
   )
   const selectedDateReadiness = useMemo(
-    () => buildDateReadiness(schedulesOnSelectedDate, dateFilter),
-    [dateFilter, schedulesOnSelectedDate],
+    () => buildDateReadiness(scopedSchedules, dateFilter, timeMode),
+    [dateFilter, scopedSchedules, timeMode],
   )
+  const duplicateSourceDate = dateFilter || (timeMode === 'today' ? today : '')
 
   const duplicatableSchedulesOnSelectedDate = useMemo(
     () =>
-      schedulesOnSelectedDate.filter(
-        (schedule) => schedule.status !== 'cancelled',
+      scopedSchedules.filter(
+        (schedule) => canDuplicateSchedule(schedule),
       ),
-    [schedulesOnSelectedDate],
+    [scopedSchedules],
   )
 
   const filteredSchedules = useMemo(() => {
@@ -214,6 +220,7 @@ export function ScheduleManagementPage() {
     return schedules.filter((schedule) => {
       const matchesStatus =
         statusFilter === 'all' || schedule.status === statusFilter
+      const matchesTimeMode = matchesScheduleTimeMode(schedule, timeMode)
       const matchesDate = !dateFilter || schedule.schedule_date === dateFilter
       const searchableText = [
         schedule.polyclinic_name,
@@ -225,12 +232,13 @@ export function ScheduleManagementPage() {
         .toLowerCase()
 
       return (
+        matchesTimeMode &&
         matchesStatus &&
         matchesDate &&
         searchableText.includes(normalizedSearch)
       )
     })
-  }, [dateFilter, schedules, searchTerm, statusFilter])
+  }, [dateFilter, schedules, searchTerm, statusFilter, timeMode])
   const paginatedSchedules = useMemo(
     () => paginateItems(filteredSchedules, page, pageSize),
     [filteredSchedules, page],
@@ -381,10 +389,12 @@ export function ScheduleManagementPage() {
   }
 
   function startDuplicateSchedule(schedule: ScheduleAvailability) {
-    if (schedule.status === 'cancelled') {
+    if (!canDuplicateSchedule(schedule)) {
       setNotice({
-        text: 'Jadwal yang sudah batal tidak diduplikasi. Buat jadwal baru bila layanan ingin dibuka kembali.',
-        title: 'Jadwal batal',
+        text: isPastSchedule(schedule)
+          ? 'Jadwal terlewat hanya bisa dilihat sebagai histori. Buat jadwal baru untuk layanan berikutnya.'
+          : 'Jadwal yang sudah batal tidak diduplikasi. Buat jadwal baru bila layanan ingin dibuka kembali.',
+        title: isPastSchedule(schedule) ? 'Jadwal terlewat' : 'Jadwal batal',
         tone: 'warning',
       })
       return
@@ -393,7 +403,7 @@ export function ScheduleManagementPage() {
     const targetDate = addDays(schedule.schedule_date, 1)
     setPendingDuplicate({
       description: `${schedule.polyclinic_name} bersama ${schedule.doctor_name} akan disalin ke ${formatDateLabel(targetDate)} dengan jam, kuota, dan durasi yang sama.`,
-      sourceLabel: `${schedule.polyclinic_name} · ${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)}`,
+      sourceLabel: `${schedule.polyclinic_name} - ${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)}`,
       schedules: [schedule],
       targetDate,
       title: 'Duplikat jadwal ke hari berikutnya?',
@@ -401,11 +411,11 @@ export function ScheduleManagementPage() {
   }
 
   function startDuplicateSelectedDate() {
-    if (!dateFilter || duplicatableSchedulesOnSelectedDate.length === 0) return
-    const targetDate = addDays(dateFilter, 1)
+    if (!duplicateSourceDate || duplicatableSchedulesOnSelectedDate.length === 0) return
+    const targetDate = addDays(duplicateSourceDate, 1)
     setPendingDuplicate({
-      description: `${duplicatableSchedulesOnSelectedDate.length} jadwal pada ${formatDateLabel(dateFilter)} akan disalin ke tanggal tujuan. Jadwal batal tidak ikut disalin, dan jadwal yang bentrok akan dilewati oleh sistem.`,
-      sourceLabel: formatDateLabel(dateFilter),
+      description: `${duplicatableSchedulesOnSelectedDate.length} jadwal pada ${formatDateLabel(duplicateSourceDate)} akan disalin ke tanggal tujuan. Jadwal batal dan jadwal terlewat tidak ikut disalin, dan jadwal yang bentrok akan dilewati oleh sistem.`,
+      sourceLabel: formatDateLabel(duplicateSourceDate),
       schedules: duplicatableSchedulesOnSelectedDate,
       targetDate,
       title: 'Duplikat jadwal tanggal terpilih?',
@@ -413,6 +423,15 @@ export function ScheduleManagementPage() {
   }
 
   function startEdit(schedule: ScheduleAvailability) {
+    if (!canEditSchedule(schedule)) {
+      setNotice({
+        text: 'Jadwal terlewat hanya bisa dilihat untuk audit. Buat jadwal baru jika perlu membuka layanan lagi.',
+        title: 'Jadwal read-only',
+        tone: 'warning',
+      })
+      return
+    }
+
     setNotice(null)
     setEditingScheduleId(schedule.schedule_id)
     setDraft({
@@ -485,6 +504,15 @@ export function ScheduleManagementPage() {
       return
     }
 
+    if (payload.schedule_date < today) {
+      setNotice({
+        text: 'Jadwal lampau tidak bisa dibuat atau diubah. Gunakan tanggal hari ini atau tanggal mendatang.',
+        title: 'Tanggal tidak valid',
+        tone: 'warning',
+      })
+      return
+    }
+
     if (payload.quota_limit < 1 || payload.average_service_minutes < 1) {
       setNotice({
         text: 'Kuota dan durasi layanan minimal 1.',
@@ -498,6 +526,15 @@ export function ScheduleManagementPage() {
       null
 
     if (editingScheduleId) {
+      if (currentSchedule && !canEditSchedule(currentSchedule)) {
+        setNotice({
+          text: 'Jadwal terlewat tidak bisa diubah agar histori operasional tetap konsisten.',
+          title: 'Jadwal read-only',
+          tone: 'warning',
+        })
+        return
+      }
+
       setPendingSave({ payload, schedule: currentSchedule })
       return
     }
@@ -535,7 +572,10 @@ export function ScheduleManagementPage() {
                 Buat Jadwal
               </Button>
               <Button
-                disabled={!dateFilter || duplicatableSchedulesOnSelectedDate.length === 0}
+                disabled={
+                  !duplicateSourceDate ||
+                  duplicatableSchedulesOnSelectedDate.length === 0
+                }
                 variant="secondary"
                 onClick={startDuplicateSelectedDate}
               >
@@ -603,7 +643,7 @@ export function ScheduleManagementPage() {
               <p className="text-sm text-slate-500">
                 {dateFilter
                   ? `${selectedDateStats.total} jadwal pada ${formatDateLabel(dateFilter)}, ${selectedDateStats.active} masih aktif.`
-                  : `${schedules.length} jadwal dari seluruh tanggal ditampilkan.`}
+                  : `${selectedDateStats.total} jadwal dalam mode ${scheduleTimeModeLabel(timeMode)}.`}
                 {dateFilter && selectedDateStats.cancelled > 0
                   ? ` ${selectedDateStats.cancelled} jadwal batal tidak ikut diduplikasi.`
                   : ''}
@@ -611,26 +651,39 @@ export function ScheduleManagementPage() {
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
-                variant={dateFilter === today ? 'primary' : 'secondary'}
+                variant={timeMode === 'today' && !dateFilter ? 'primary' : 'secondary'}
                 onClick={() => {
-                  setDateFilter(today)
+                  setTimeMode('today')
+                  setDateFilter('')
                   setPage(1)
                 }}
               >
                 Hari Ini
               </Button>
               <Button
-                variant={dateFilter === addDays(today, 1) ? 'primary' : 'secondary'}
+                variant={timeMode === 'upcoming' && !dateFilter ? 'primary' : 'secondary'}
                 onClick={() => {
-                  setDateFilter(addDays(today, 1))
+                  setTimeMode('upcoming')
+                  setDateFilter('')
                   setPage(1)
                 }}
               >
-                Besok
+                Mendatang
               </Button>
               <Button
-                variant={dateFilter === '' ? 'primary' : 'secondary'}
+                variant={timeMode === 'past' && !dateFilter ? 'primary' : 'secondary'}
                 onClick={() => {
+                  setTimeMode('past')
+                  setDateFilter('')
+                  setPage(1)
+                }}
+              >
+                Terlewat
+              </Button>
+              <Button
+                variant={timeMode === 'all' && !dateFilter ? 'primary' : 'secondary'}
+                onClick={() => {
+                  setTimeMode('all')
                   setDateFilter('')
                   setPage(1)
                 }}
@@ -642,7 +695,8 @@ export function ScheduleManagementPage() {
                 onClick={() => {
                   setSearchTerm('')
                   setStatusFilter('all')
-                  setDateFilter(today)
+                  setTimeMode('today')
+                  setDateFilter('')
                   setPage(1)
                 }}
               >
@@ -686,6 +740,7 @@ export function ScheduleManagementPage() {
                   value={dateFilter}
                   onChange={(event) => {
                     setDateFilter(event.target.value)
+                    setTimeMode('all')
                     setPage(1)
                   }}
                 />
@@ -772,6 +827,9 @@ export function ScheduleManagementPage() {
                       </td>
                       <td className="px-4 py-3">
                         <ScheduleStatusBadge status={schedule.status} />
+                        <div className="mt-1">
+                          <SchedulePhaseBadge schedule={schedule} />
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
@@ -782,27 +840,33 @@ export function ScheduleManagementPage() {
                             <Eye size={16} />
                             Detail
                           </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => startEdit(schedule)}
-                          >
-                            <Pencil size={16} />
-                            Edit
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => startDuplicateSchedule(schedule)}
-                          >
-                            <Copy size={16} />
-                            Duplikat
-                          </Button>
-                          <Button
-                            variant="danger"
-                            onClick={() => setPendingDelete(schedule)}
-                          >
-                            <Trash2 size={16} />
-                            Hapus
-                          </Button>
+                          {canEditSchedule(schedule) ? (
+                            <Button
+                              variant="secondary"
+                              onClick={() => startEdit(schedule)}
+                            >
+                              <Pencil size={16} />
+                              Edit
+                            </Button>
+                          ) : null}
+                          {canDuplicateSchedule(schedule) ? (
+                            <Button
+                              variant="secondary"
+                              onClick={() => startDuplicateSchedule(schedule)}
+                            >
+                              <Copy size={16} />
+                              Duplikat
+                            </Button>
+                          ) : null}
+                          {canDeleteSchedule(schedule) ? (
+                            <Button
+                              variant="danger"
+                              onClick={() => setPendingDelete(schedule)}
+                            >
+                              <Trash2 size={16} />
+                              Hapus
+                            </Button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -1004,6 +1068,7 @@ export function ScheduleManagementPage() {
         >
           {detailSchedule ? (
             <ScheduleDetailPanel
+              canEdit={canEditSchedule(detailSchedule)}
               schedule={detailSchedule}
               onEdit={() => {
                 startEdit(detailSchedule)
@@ -1032,7 +1097,20 @@ export function ScheduleManagementPage() {
           tone="danger"
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => {
-            if (pendingDelete) deleteMutation.mutate(pendingDelete.schedule_id)
+            if (!pendingDelete) return
+            if (!canDeleteSchedule(pendingDelete)) {
+              setNotice({
+                text: isPastSchedule(pendingDelete)
+                  ? 'Jadwal terlewat tidak bisa dihapus dari panel operasional. Simpan sebagai histori.'
+                  : 'Jadwal yang sudah memiliki antrean tidak bisa dihapus. Gunakan status Tutup atau Batal.',
+                title: 'Hapus ditolak',
+                tone: 'warning',
+              })
+              setPendingDelete(null)
+              return
+            }
+
+            deleteMutation.mutate(pendingDelete.schedule_id)
           }}
         />
         <DuplicateScheduleDialog
@@ -1259,9 +1337,11 @@ function DuplicateScheduleDialog({
 }
 
 function ScheduleDetailPanel({
+  canEdit,
   onEdit,
   schedule,
 }: {
+  canEdit: boolean
   onEdit: () => void
   schedule: ScheduleAvailability
 }) {
@@ -1289,6 +1369,7 @@ function ScheduleDetailPanel({
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <DetailMetric label="Tanggal" value={schedule.schedule_date} />
+          <DetailMetric label="Mode" value={schedulePhaseLabel(schedule)} />
           <DetailMetric
             label="Jam praktik"
             value={`${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)}`}
@@ -1322,10 +1403,16 @@ function ScheduleDetailPanel({
         </div>
       </Card>
 
-      <Button className="w-full" variant="secondary" onClick={onEdit}>
-        <Pencil size={16} />
-        Edit Jadwal
-      </Button>
+      {canEdit ? (
+        <Button className="w-full" variant="secondary" onClick={onEdit}>
+          <Pencil size={16} />
+          Edit Jadwal
+        </Button>
+      ) : (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-600">
+          Jadwal terlewat bersifat read-only untuk menjaga histori antrean.
+        </div>
+      )}
     </div>
   )
 }
@@ -1383,6 +1470,7 @@ function buildDuplicateSuccessMessage(result: DuplicateScheduleResult) {
 function buildDateReadiness(
   schedules: ScheduleAvailability[],
   dateFilter: string,
+  timeMode: ScheduleTimeMode,
 ): DateReadiness {
   const open = schedules.filter((schedule) => schedule.status === 'open').length
   const full = schedules.filter((schedule) => schedule.status === 'full').length
@@ -1395,7 +1483,25 @@ function buildDateReadiness(
     0,
   )
   const taken = schedules.reduce((total, schedule) => total + schedule.total_taken, 0)
-  const label = dateFilter ? formatDateLabel(dateFilter) : 'semua tanggal'
+  const label = dateFilter
+    ? formatDateLabel(dateFilter)
+    : scheduleTimeModeLabel(timeMode)
+
+  if (timeMode === 'past' && !dateFilter) {
+    return {
+      description:
+        'Jadwal terlewat ditampilkan sebagai arsip operasional. Gunakan Detail untuk audit, bukan untuk perubahan data.',
+      icon: <Clock3 size={20} />,
+      metrics: [
+        { label: 'Jadwal', value: schedules.length },
+        { label: 'Buka', value: open },
+        { label: 'Tutup', value: closed },
+        { label: 'Batal', value: cancelled },
+      ],
+      title: 'Mode histori jadwal',
+      tone: 'neutral',
+    }
+  }
 
   if (schedules.length === 0) {
     return {
@@ -1550,6 +1656,63 @@ function toDateInputValue(date: Date) {
   return `${year}-${month}-${day}`
 }
 
+function matchesScheduleTimeMode(
+  schedule: ScheduleAvailability,
+  mode: ScheduleTimeMode,
+) {
+  if (mode === 'today') return schedule.schedule_date === today
+  if (mode === 'upcoming') return schedule.schedule_date > today
+  if (mode === 'past') return schedule.schedule_date < today
+  return true
+}
+
+function isPastSchedule(schedule: ScheduleAvailability) {
+  return schedule.schedule_date < today
+}
+
+function canEditSchedule(schedule: ScheduleAvailability) {
+  return !isPastSchedule(schedule)
+}
+
+function canDeleteSchedule(schedule: ScheduleAvailability) {
+  return !isPastSchedule(schedule) && schedule.total_taken === 0
+}
+
+function canDuplicateSchedule(schedule: ScheduleAvailability) {
+  return !isPastSchedule(schedule) && schedule.status !== 'cancelled'
+}
+
+function scheduleTimeModeLabel(mode: ScheduleTimeMode) {
+  const labels: Record<ScheduleTimeMode, string> = {
+    all: 'Semua Tanggal',
+    past: 'Terlewat',
+    today: 'Hari Ini',
+    upcoming: 'Mendatang',
+  }
+  return labels[mode]
+}
+
+function schedulePhaseLabel(schedule: ScheduleAvailability) {
+  if (schedule.schedule_date < today) return 'Terlewat'
+  if (schedule.schedule_date > today) return 'Mendatang'
+  if (schedule.status === 'cancelled') return 'Batal'
+  if (schedule.status === 'closed') return 'Ditutup'
+
+  const now = new Date()
+  const start = parseScheduleDateTime(schedule.schedule_date, schedule.start_time)
+  const end = parseScheduleDateTime(schedule.schedule_date, schedule.end_time)
+
+  if (now < start) return 'Belum mulai'
+  if (now >= end) return 'Sisa antrean'
+  return 'Berjalan'
+}
+
+function parseScheduleDateTime(dateValue: string, timeValue: string) {
+  const [year, month, day] = dateValue.split('-').map(Number)
+  const [hour, minute] = timeValue.slice(0, 5).split(':').map(Number)
+  return new Date(year, month - 1, day, hour, minute)
+}
+
 function Field({
   children,
   label,
@@ -1579,6 +1742,28 @@ function ScheduleStatusBadge({ status }: { status: ScheduleStatus }) {
         : status === 'closed'
           ? 'bg-slate-100 text-slate-600'
           : 'bg-rose-50 text-rose-700'
+
+  return (
+    <span className={`rounded-full px-3 py-1 text-xs font-black ${tone}`}>
+      {label}
+    </span>
+  )
+}
+
+function SchedulePhaseBadge({ schedule }: { schedule: ScheduleAvailability }) {
+  const label = schedulePhaseLabel(schedule)
+  const tone =
+    label === 'Berjalan'
+      ? 'bg-teal-50 text-teal-700'
+      : label === 'Sisa antrean'
+        ? 'bg-amber-50 text-amber-700'
+        : label === 'Terlewat'
+          ? 'bg-slate-100 text-slate-600'
+          : label === 'Mendatang' || label === 'Belum mulai'
+            ? 'bg-blue-50 text-blue-700'
+            : label === 'Batal'
+              ? 'bg-rose-50 text-rose-700'
+              : 'bg-slate-100 text-slate-600'
 
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-black ${tone}`}>
