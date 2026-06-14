@@ -243,9 +243,19 @@ export function ScheduleManagementPage() {
         (polyclinic.is_active || polyclinic.id === draft.polyclinic_id),
     ) ?? []
 
+  const assignedDoctorIds = new Set(
+    references?.doctorPolyclinics
+      .filter((assignment) => assignment.polyclinic_id === draft.polyclinic_id)
+      .map((assignment) => assignment.doctor_id) ?? [],
+  )
+
   const selectableDoctors =
     references?.doctors.filter(
-      (doctor) => doctor.is_active || doctor.id === draft.doctor_id,
+      (doctor) =>
+        (editingScheduleId && doctor.id === draft.doctor_id) ||
+        (draft.polyclinic_id &&
+          assignedDoctorIds.has(doctor.id) &&
+          doctor.is_active),
     ) ?? []
   const draftPreview = useMemo(
     () =>
@@ -358,7 +368,8 @@ export function ScheduleManagementPage() {
     setDraft((current) => ({
       ...current,
       [key]: value,
-      ...(key === 'branch_id' ? { polyclinic_id: '' } : {}),
+      ...(key === 'branch_id' ? { doctor_id: '', polyclinic_id: '' } : {}),
+      ...(key === 'polyclinic_id' ? { doctor_id: '' } : {}),
     }))
   }
 
@@ -447,6 +458,20 @@ export function ScheduleManagementPage() {
     if (!payload.branch_id || !payload.polyclinic_id || !payload.doctor_id) {
       setNotice({
         text: 'Cabang, poli, dan dokter wajib dipilih.',
+        tone: 'warning',
+      })
+      return
+    }
+
+    const isDoctorAssignedToPolyclinic = references?.doctorPolyclinics.some(
+      (assignment) =>
+        assignment.polyclinic_id === payload.polyclinic_id &&
+        assignment.doctor_id === payload.doctor_id,
+    )
+
+    if (!isDoctorAssignedToPolyclinic) {
+      setNotice({
+        text: 'Dokter yang dipilih tidak terhubung dengan poli tersebut.',
         tone: 'warning',
       })
       return
@@ -1104,7 +1129,7 @@ function ScheduleDraftPreview({ preview }: { preview: DraftPreview }) {
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
             <PreviewMetric label="Jam" value={preview.timeRangeLabel} />
             <PreviewMetric
-              label="Slot estimasi"
+              label="Slot waktu"
               value={preview.hasRequiredFields ? preview.estimatedSlots : '-'}
             />
             <PreviewMetric
@@ -1472,7 +1497,7 @@ function buildDraftPreview({
 
   if (hasRequiredFields && quotaLimit > estimatedSlots) {
     conflictLabels.push(
-      `Kuota ${quotaLimit} lebih besar dari estimasi slot waktu ${estimatedSlots}.`,
+      `Kuota ${quotaLimit} lebih besar dari kapasitas slot waktu ${estimatedSlots}.`,
     )
   }
 

@@ -26,6 +26,11 @@ export type DuplicateScheduleResult = {
   failures: string[]
 }
 
+export type DoctorPolyclinicReference = {
+  doctor_id: string
+  polyclinic_id: string
+}
+
 export async function fetchScheduleManagementRows() {
   const { data, error } = await supabase
     .from('v_schedule_availability')
@@ -38,7 +43,7 @@ export async function fetchScheduleManagementRows() {
 }
 
 export async function fetchScheduleReferences() {
-  const [branches, polyclinics, doctors] = await Promise.all([
+  const [branches, polyclinics, doctors, doctorPolyclinics] = await Promise.all([
     supabase
       .from('clinic_branches')
       .select('id, name, is_active')
@@ -51,16 +56,21 @@ export async function fetchScheduleReferences() {
       .from('doctors')
       .select('id, full_name, license_number, specialization, bio, default_service_minutes, is_active')
       .order('full_name', { ascending: true }),
+    supabase
+      .from('doctor_polyclinics')
+      .select('doctor_id, polyclinic_id'),
   ])
 
   if (branches.error) throw branches.error
   if (polyclinics.error) throw polyclinics.error
   if (doctors.error) throw doctors.error
+  if (doctorPolyclinics.error) throw doctorPolyclinics.error
 
   return {
     branches: branches.data as ClinicBranch[],
     polyclinics: polyclinics.data as Polyclinic[],
     doctors: doctors.data as Doctor[],
+    doctorPolyclinics: doctorPolyclinics.data as DoctorPolyclinicReference[],
   }
 }
 

@@ -5,6 +5,7 @@ import { ProtectedRoute } from '../features/auth/routes/protected-route'
 import { DashboardPage } from '../features/dashboard/pages/dashboard-page'
 import { DoctorManagementPage } from '../features/doctors/pages/doctor-management-page'
 import { PolyclinicManagementPage } from '../features/polyclinics/pages/polyclinic-management-page'
+import { QueueDisplayPage } from '../features/queues/pages/queue-display-page'
 import { QueueManagementPage } from '../features/queues/pages/queue-management-page'
 import { ScheduleManagementPage } from '../features/schedules/pages/schedule-management-page'
 
@@ -25,6 +26,14 @@ export function AppRoutes() {
         element={
           <ProtectedRoute>
             <QueueManagementPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/queue-display"
+        element={
+          <ProtectedRoute>
+            <QueueDisplayPage />
           </ProtectedRoute>
         }
       />

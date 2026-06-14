@@ -3,6 +3,7 @@ import {
   CalendarDays,
   Building2,
   LayoutDashboard,
+  Monitor,
   Stethoscope,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -23,6 +24,11 @@ export const adminNavigation: NavigationItem[] = [
     icon: <Activity size={18} />,
     label: 'Antrean',
     to: '/queues',
+  },
+  {
+    icon: <Monitor size={18} />,
+    label: 'Display',
+    to: '/queue-display',
   },
   {
     icon: <CalendarDays size={18} />,
