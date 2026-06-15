@@ -269,19 +269,6 @@ export function QueueManagementPage() {
     stats.waiting === 0 &&
     stats.missed > 0 &&
     schedulePhase !== 'before-start'
-  const callNextGuidance = currentTicket
-    ? `Selesaikan, lewati, atau batalkan ${currentTicket.queue_code} sebelum memanggil nomor berikutnya.`
-    : isSessionClosed
-      ? 'Sesi antrean sudah ditutup.'
-    : schedulePhase === 'before-start' && selectedSchedule
-      ? `Nomor pasien sudah bisa terkumpul, tetapi pemanggilan dimulai pukul ${selectedSchedule.start_time.slice(0, 5)}.`
-      : stats.waiting === 0 && stats.missed > 0
-      ? 'Antrean reguler habis. Panggil ulang pasien yang sempat terlewat.'
-      : stats.waiting === 0
-        ? 'Belum ada pasien waiting pada sesi ini.'
-      : schedulePhase === 'after-end'
-        ? 'Jam praktik sudah lewat. Selesaikan sisa nomor yang sudah terambil sampai antrean habis.'
-        : 'Siap memanggil pasien waiting paling awal.'
   const canCloseSession =
     Boolean(activeSessionId) &&
     !isSessionClosed &&
@@ -469,21 +456,6 @@ export function QueueManagementPage() {
           </FeedbackBanner>
         ) : null}
 
-        {hasUnresolvedCall || cannotCallBecauseSchedule || schedulePhase === 'after-end' || isSessionClosed ? (
-          <FeedbackBanner
-            title={
-              isSessionClosed
-                ? 'Sesi antrean ditutup'
-                : schedulePhase === 'after-end'
-                ? 'Mode penyelesaian sisa antrean'
-                : 'Panggil berikutnya terkunci'
-            }
-            tone="warning"
-          >
-            {callNextGuidance}
-          </FeedbackBanner>
-        ) : null}
-
         <Card className="sticky top-[88px] z-[5] border-slate-200/80 bg-white/95 p-4 shadow-lg shadow-slate-900/5 backdrop-blur">
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
             <div>
@@ -587,54 +559,112 @@ export function QueueManagementPage() {
         </div>
 
         <Card className="overflow-hidden">
-          <div className="grid gap-4 p-4 xl:grid-cols-[1fr_360px] xl:items-center">
+          <div className="grid gap-4 p-4 xl:grid-cols-[1fr_360px] xl:items-start">
             <div>
-              <p className="text-sm font-black uppercase tracking-wide text-teal-700">
-                Sesi Aktif
-              </p>
-              <div className="mt-3 grid gap-3 lg:grid-cols-[220px_1fr]">
-                <Field label="Poli">
-                  <select
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
-                    value={polyclinicFilter}
-                    onChange={(event) => {
-                      setPolyclinicFilter(event.target.value)
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-black uppercase tracking-wide text-teal-700">
+                  Sesi Aktif
+                </p>
+                <h3 className="text-xl font-black text-slate-950">
+                  Pilih poli dan jadwal dokter
+                </h3>
+                <p className="text-sm font-semibold text-slate-500">
+                  Klik label poli untuk melihat sesi praktik aktif hari ini.
+                </p>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  className={[
+                    'rounded-full border px-4 py-2 text-sm font-black transition',
+                    polyclinicFilter === 'all'
+                      ? 'border-teal-600 bg-teal-600 text-white shadow-sm shadow-teal-900/15'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700',
+                  ].join(' ')}
+                  type="button"
+                  onClick={() => {
+                    setPolyclinicFilter('all')
+                    setSelectedSessionId(null)
+                    setPage(1)
+                  }}
+                >
+                  Semua Poli
+                </button>
+                {polyclinicOptions.map(([id, name]) => (
+                  <button
+                    className={[
+                      'rounded-full border px-4 py-2 text-sm font-black transition',
+                      polyclinicFilter === id
+                        ? 'border-teal-600 bg-teal-600 text-white shadow-sm shadow-teal-900/15'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700',
+                    ].join(' ')}
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      setPolyclinicFilter(id)
                       setSelectedSessionId(null)
                       setPage(1)
                     }}
                   >
-                    <option value="all">Semua poli</option>
-                    {polyclinicOptions.map(([id, name]) => (
-                      <option key={id} value={id}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Jadwal / Dokter">
-                  <select
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10"
-                    value={activeSessionId ?? ''}
-                    onChange={(event) => {
-                      setSelectedSessionId(event.target.value || null)
-                      setPage(1)
-                    }}
-                  >
-                    {filteredSchedules.length === 0 ? (
-                      <option value="">Tidak ada sesi untuk filter ini</option>
-                    ) : null}
-                    {filteredSchedules.map((schedule) => (
-                      <option
+                    {name}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-2 md:grid-cols-3 lg:grid-cols-4">
+                {filteredSchedules.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-sm font-bold text-slate-500 md:col-span-2">
+                    Tidak ada jadwal dokter aktif untuk pilihan ini.
+                  </div>
+                ) : (
+                  filteredSchedules.map((schedule) => {
+                    const isSelected = schedule.queue_session_id === activeSessionId
+
+                    return (
+                      <button
+                        className={[
+                          'rounded-lg border p-3 text-left transition',
+                          isSelected
+                            ? 'border-teal-500 bg-teal-50 shadow-sm shadow-teal-900/10'
+                            : 'border-slate-200 bg-white hover:border-teal-200 hover:bg-slate-50',
+                        ].join(' ')}
                         key={schedule.schedule_id}
-                        value={schedule.queue_session_id ?? ''}
+                        type="button"
+                        onClick={() => {
+                          setSelectedSessionId(schedule.queue_session_id)
+                          setPage(1)
+                        }}
                       >
-                        {schedule.polyclinic_name} - {schedule.doctor_name} (
-                        {schedule.start_time.slice(0, 5)}-
-                        {schedule.end_time.slice(0, 5)})
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-black text-slate-950">
+                              {schedule.polyclinic_name}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs font-semibold text-slate-600">
+                              {schedule.doctor_name}
+                            </p>
+                          </div>
+                          <span
+                            className={[
+                              'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black',
+                              isSelected
+                                ? 'bg-teal-600 text-white'
+                                : 'bg-slate-100 text-slate-600',
+                            ].join(' ')}
+                          >
+                            {isSelected ? 'Dipilih' : 'Pilih'}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1 text-[11px] font-bold text-slate-500">
+                          <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-700">
+                            {schedule.start_time.slice(0, 5)} - {schedule.end_time.slice(0, 5)}
+                          </span>
+                          
+                        </div>
+                      </button>
+                    )
+                  })
+                )}
               </div>
             </div>
             <div className="rounded-2xl bg-slate-950 p-4 text-white">
@@ -1071,17 +1101,6 @@ function QueueStatusSection({
         ) : null}
       </div>
     </Card>
-  )
-}
-
-function Field({ children, label }: { children: ReactNode; label: string }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-sm font-bold text-slate-700">
-        {label}
-      </span>
-      {children}
-    </label>
   )
 }
 
