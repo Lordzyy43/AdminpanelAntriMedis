@@ -644,16 +644,6 @@ export function QueueManagementPage() {
                               {schedule.doctor_name}
                             </p>
                           </div>
-                          <span
-                            className={[
-                              'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black',
-                              isSelected
-                                ? 'bg-teal-600 text-white'
-                                : 'bg-slate-100 text-slate-600',
-                            ].join(' ')}
-                          >
-                            {isSelected ? 'Dipilih' : 'Pilih'}
-                          </span>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1 text-[11px] font-bold text-slate-500">
                           <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-700">

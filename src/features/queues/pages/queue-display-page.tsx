@@ -16,6 +16,7 @@ const today = toDateInputValue(new Date())
 export function QueueDisplayPage() {
   const queryClient = useQueryClient()
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [lastAnnouncedTicket, setLastAnnouncedTicket] = useState<string | null>(null)
 
   const schedulesQuery = useQuery({
     queryKey: ['queue-display-schedules', today],
@@ -36,6 +37,24 @@ export function QueueDisplayPage() {
   })
   const tickets = useMemo(() => ticketsQuery.data ?? [], [ticketsQuery.data])
   const currentTicket = useMemo(() => pickCurrentTicket(tickets), [tickets])
+  useEffect(() => {
+  if (!currentTicket) return
+
+  const ticketKey =
+    `${currentTicket.queue_session_id}-${currentTicket.queue_number}`
+
+  if (ticketKey === lastAnnouncedTicket) return
+
+  if (
+    currentTicket.status === 'called' ||
+    currentTicket.status === 'serving'
+  ) {
+    console.log('ANNOUNCING:', currentTicket.queue_code)
+
+    announceQueue(currentTicket)
+    setLastAnnouncedTicket(ticketKey)
+  }
+}, [currentTicket, lastAnnouncedTicket])
   const displaySchedule = useMemo(
     () =>
       schedules.find(
@@ -102,6 +121,43 @@ export function QueueDisplayPage() {
       // Browser fullscreen can be blocked by policy; the display still works in windowed mode.
     }
   }
+
+  function announceQueue(ticket: QueueTicketDetail) {
+  const speak = () => {
+    const utterance = new SpeechSynthesisUtterance(
+      `Perhatian. Nomor antrean ${ticket.queue_code}. Silakan menuju ruang pemeriksaan.`
+    )
+
+    utterance.lang = 'id-ID'
+    utterance.rate = 0.9
+    utterance.pitch = 1
+    utterance.volume = 1
+
+    const voices = window.speechSynthesis.getVoices()
+
+    const indoVoice = voices.find(
+      voice =>
+        voice.lang.toLowerCase().includes('id')
+    )
+
+    if (indoVoice) {
+      utterance.voice = indoVoice
+    }
+
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  }
+
+  const voices = window.speechSynthesis.getVoices()
+
+  if (voices.length > 0) {
+    speak()
+  } else {
+    window.speechSynthesis.onvoiceschanged = () => {
+      speak()
+    }
+  }
+}
 
   return (
     <main className="min-h-screen overflow-hidden bg-slate-950 text-white">
