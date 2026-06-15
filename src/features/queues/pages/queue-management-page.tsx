@@ -1461,9 +1461,8 @@ function buildConfirmState(action: PendingQueueAction | null) {
       confirmLabel: 'Panggil',
       contextItems: [
         { label: 'Aturan', value: 'Pasien menunggu paling awal' },
-        { label: 'Efek', value: 'Status menjadi dipanggil' },
       ],
-      description: 'Sistem akan memanggil pasien menunggu paling awal pada jadwal aktif.',
+      description: '',
       icon: <Megaphone size={20} />,
       requiresReason: false,
       title: 'Panggil antrean berikutnya?',
@@ -1478,8 +1477,7 @@ function buildConfirmState(action: PendingQueueAction | null) {
         { label: 'Aturan', value: 'Hanya setelah antrean menunggu habis' },
         { label: 'Nomor', value: 'Tetap nomor lama' },
       ],
-      description:
-        'Sistem akan memanggil ulang pasien terlewat paling awal. Panggil ulang hanya tersedia setelah antrean menunggu reguler habis.',
+      description: '',
       icon: <RotateCcw size={20} />,
       requiresReason: false,
       title: 'Panggil ulang antrean terlewat?',
@@ -1495,9 +1493,7 @@ function buildConfirmState(action: PendingQueueAction | null) {
         { label: 'Menunggu', value: hasWaiting ? `${action.waitingCount} akan kedaluwarsa` : 'Tidak ada' },
         { label: 'Dipanggil/dilayani', value: 'Harus sudah kosong' },
       ],
-      description: hasWaiting
-        ? `${action.waitingCount} antrean menunggu akan dibuat kedaluwarsa. Antrean terlewat akan dilewati final, sedangkan pasien yang dipanggil atau dilayani harus diselesaikan manual sebelum sesi bisa ditutup.`
-        : 'Sesi akan ditutup. Jika masih ada antrean terlewat, sistem akan menandainya sebagai dilewati final.',
+      description: '',
       icon: <Power size={20} />,
       requiresReason: false,
       title: 'Tutup sesi antrean?',
@@ -1526,7 +1522,7 @@ function buildConfirmState(action: PendingQueueAction | null) {
           ? 'Lewati'
           : 'Konfirmasi',
     contextItems: buildActionContextItems(action),
-    description: actionDescription(action),
+    description: '',
     icon: actionIcon(action.status),
     requiresReason: requiresReason(action.status),
     title: `${labels[action.status]}?`,
@@ -1543,51 +1539,10 @@ function requiresReason(status: QueueStatus) {
 }
 
 function buildActionContextItems(action: Extract<PendingQueueAction, { type: 'update-status' }>) {
-  const isRecalled = action.ticket.missed_count > 0
-  const statusFlow =
-    action.status === 'missed'
-      ? 'Dipanggil -> terlewat'
-      : action.status === 'skipped' && isRecalled
-        ? 'Recall -> dilewati final'
-        : action.status === 'skipped'
-          ? `${queueStatusLabel(action.ticket.status)} -> dilewati final`
-          : action.status === 'cancelled'
-            ? `${queueStatusLabel(action.ticket.status)} -> dibatalkan admin`
-            : `${queueStatusLabel(action.ticket.status)} -> ${queueStatusLabel(action.status)}`
-
   return [
     { label: 'Nomor', value: action.ticket.queue_code },
     { label: 'Pasien', value: action.ticket.patient_name },
-    { label: 'Transisi', value: statusFlow },
   ]
-}
-
-function actionDescription(action: Extract<PendingQueueAction, { type: 'update-status' }>) {
-  if (action.status === 'missed') {
-    return 'Pasien tidak hadir pada panggilan pertama. Nomor akan masuk daftar terlewat dan bisa dipanggil ulang setelah antrean menunggu habis.'
-  }
-
-  if (action.status === 'skipped' && action.ticket.missed_count > 0) {
-    return 'Pasien sudah pernah terlewat dan dipanggil ulang. Aksi ini menjadikan nomor dilewati final agar sesi bisa selesai dengan jelas.'
-  }
-
-  if (action.status === 'skipped') {
-    return 'Nomor akan dilewati final. Gunakan jika pasien tidak bisa dilayani dan tidak perlu dipanggil ulang.'
-  }
-
-  if (action.status === 'cancelled') {
-    return 'Antrean dibatalkan oleh petugas. Alasan akan tersimpan untuk audit dan notifikasi pasien.'
-  }
-
-  if (action.status === 'serving') {
-    return 'Pasien sudah hadir dan pelayanan akan dimulai.'
-  }
-
-  if (action.status === 'completed') {
-    return 'Pelayanan pasien selesai dan nomor menjadi status final.'
-  }
-
-  return `${queueStatusLabel(action.status)} untuk nomor ${action.ticket.queue_code} atas nama ${action.ticket.patient_name}.`
 }
 
 function actionIcon(status: QueueStatus) {
@@ -1598,20 +1553,6 @@ function actionIcon(status: QueueStatus) {
   if (status === 'cancelled') return <OctagonX size={20} />
   if (status === 'called') return <Megaphone size={20} />
   return <Activity size={20} />
-}
-
-function queueStatusLabel(status: QueueStatus) {
-  const labels: Record<QueueStatus, string> = {
-    cancelled: 'Dibatalkan',
-    called: 'Dipanggil',
-    completed: 'Selesai',
-    expired: 'Kedaluwarsa',
-    missed: 'Terlewat',
-    serving: 'Dilayani',
-    skipped: 'Dilewati',
-    waiting: 'Menunggu',
-  }
-  return labels[status]
 }
 
 function formatDateLabel(dateValue: string) {
