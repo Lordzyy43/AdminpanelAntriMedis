@@ -5,79 +5,45 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button } from '../../../components/ui/button'
 import { supabase } from '../../../lib/supabase'
 import type {
-  Polyclinic,
   QueueStatus,
   QueueTicketDetail,
   ScheduleAvailability,
 } from '../../../types/queue'
-import { fetchPolyclinics, fetchQueueTickets, fetchSchedules } from '../services/queue-service'
+import { fetchQueueTicketsByDate, fetchSchedules } from '../services/queue-service'
 
 const today = toDateInputValue(new Date())
-const storageKey = 'queue-display-polyclinic-id'
 
 export function QueueDisplayPage() {
   const queryClient = useQueryClient()
-  const [selectedPolyclinicId, setSelectedPolyclinicId] = useState<string>('')
   const [isFullscreen, setIsFullscreen] = useState(false)
 
-  const polyclinicsQuery = useQuery({
-    queryKey: ['queue-display-polyclinics'],
-    queryFn: fetchPolyclinics,
-  })
   const schedulesQuery = useQuery({
     queryKey: ['queue-display-schedules', today],
     queryFn: () => fetchSchedules(today),
   })
 
-  const polyclinics = useMemo(
-    () => polyclinicsQuery.data ?? [],
-    [polyclinicsQuery.data],
-  )
   const schedules = useMemo(
     () => schedulesQuery.data ?? [],
     [schedulesQuery.data],
   )
-  const selectedPolyclinic = useMemo(
-    (): Polyclinic | null =>
-      polyclinics.find((polyclinic) => polyclinic.id === selectedPolyclinicId) ?? null,
-    [polyclinics, selectedPolyclinicId],
-  )
   const activeSchedule = useMemo(
-    () => pickDisplaySchedule(schedules, selectedPolyclinicId),
-    [schedules, selectedPolyclinicId],
+    () => pickDisplaySchedule(schedules),
+    [schedules],
   )
   const ticketsQuery = useQuery({
-    queryKey: ['queue-display-tickets', activeSchedule?.queue_session_id],
-    queryFn: () => fetchQueueTickets(activeSchedule!.queue_session_id!),
-    enabled: Boolean(activeSchedule?.queue_session_id),
+    queryKey: ['queue-display-tickets', today],
+    queryFn: () => fetchQueueTicketsByDate(today),
   })
   const tickets = useMemo(() => ticketsQuery.data ?? [], [ticketsQuery.data])
   const currentTicket = useMemo(() => pickCurrentTicket(tickets), [tickets])
+  const displaySchedule = useMemo(
+    () =>
+      schedules.find(
+        (schedule) => schedule.queue_session_id === currentTicket?.queue_session_id,
+      ) ?? activeSchedule,
+    [activeSchedule, currentTicket?.queue_session_id, schedules],
+  )
   const waitingCount = tickets.filter((ticket) => ticket.status === 'waiting').length
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const saved = window.localStorage.getItem(storageKey)
-    if (saved && !selectedPolyclinicId) {
-      setSelectedPolyclinicId(saved)
-    }
-  }, [selectedPolyclinicId])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    if (selectedPolyclinicId) {
-      window.localStorage.setItem(storageKey, selectedPolyclinicId)
-    }
-  }, [selectedPolyclinicId])
-
-  useEffect(() => {
-    if (selectedPolyclinicId || polyclinics.length === 0) return
-    const defaultPolyclinic =
-      polyclinics.find((polyclinic) => polyclinic.is_active) ?? polyclinics[0]
-    if (defaultPolyclinic) {
-      setSelectedPolyclinicId(defaultPolyclinic.id)
-    }
-  }, [polyclinics, selectedPolyclinicId])
 
   useEffect(() => {
     const syncFullscreenState = () => {
@@ -150,24 +116,6 @@ export function QueueDisplayPage() {
             </h1>
           </div>
           <div className="flex items-center gap-3">
-            <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-              <p className="text-[11px] font-black uppercase text-slate-300">
-                Poli Display
-              </p>
-              <select
-                className="mt-1 w-[240px] rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm font-bold text-white outline-none"
-                value={selectedPolyclinicId}
-                onChange={(event) => setSelectedPolyclinicId(event.target.value)}
-              >
-                <option value="">Pilih poli</option>
-                {polyclinics.map((polyclinic) => (
-                  <option key={polyclinic.id} value={polyclinic.id}>
-                    {polyclinic.name}
-                    {polyclinic.is_active ? '' : ' (nonaktif)'}
-                  </option>
-                ))}
-              </select>
-            </div>
             <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-right">
               <p className="text-xs font-black uppercase text-slate-300">
                 Hari Ini
@@ -217,9 +165,9 @@ export function QueueDisplayPage() {
                 label="Menunggu"
                 value={waitingCount}
               />
-              <DisplayMetric
-                label="Terakhir"
-                value={activeSchedule?.last_number ?? 0}
+            <DisplayMetric
+              label="Terakhir"
+                value={displaySchedule?.last_number ?? currentTicket?.queue_number ?? 0}
               />
             </div>
           </div>
@@ -233,20 +181,16 @@ export function QueueDisplayPage() {
                 Poli
               </p>
               <h2 className="mt-2 text-4xl font-black leading-tight">
-                {selectedPolyclinic?.name ?? activeSchedule?.polyclinic_name ?? 'Belum ada sesi'}
+                {currentTicket?.polyclinic_name ?? displaySchedule?.polyclinic_name ?? 'Belum ada sesi'}
               </h2>
               <p className="mt-2 text-sm font-semibold text-slate-300">
-                {selectedPolyclinic
-                  ? selectedPolyclinic.is_active
-                    ? 'Aktif'
-                    : 'Tidak aktif'
-                  : 'Belum dipilih'}
+                {displaySchedule ? 'Sesi display otomatis' : 'Belum ada sesi'}
               </p>
               <p className="mt-5 text-sm font-black uppercase tracking-wide text-slate-300">
                 Dokter
               </p>
               <p className="mt-2 text-2xl font-black">
-                {activeSchedule?.doctor_name ?? '-'}
+                {currentTicket?.doctor_name ?? displaySchedule?.doctor_name ?? '-'}
               </p>
             </div>
 
@@ -258,8 +202,8 @@ export function QueueDisplayPage() {
                 </p>
               </div>
               <p className="mt-3 text-4xl font-black">
-                {activeSchedule
-                  ? `${activeSchedule.start_time.slice(0, 5)}-${activeSchedule.end_time.slice(0, 5)}`
+                {displaySchedule
+                  ? `${displaySchedule.start_time.slice(0, 5)}-${displaySchedule.end_time.slice(0, 5)}`
                   : '--:-----:--'}
               </p>
               <p className="mt-6 rounded-2xl bg-white/10 px-5 py-4 text-2xl font-black">
@@ -267,11 +211,11 @@ export function QueueDisplayPage() {
                   ? currentTicket.status === 'serving'
                     ? 'Sedang dilayani'
                     : 'Sedang dipanggil'
-                  : schedulesQuery.isLoading || ticketsQuery.isLoading || polyclinicsQuery.isLoading
+                  : schedulesQuery.isLoading || ticketsQuery.isLoading
                     ? 'Memuat data'
-                    : activeSchedule
+                    : displaySchedule
                       ? 'Menunggu pemanggilan'
-                      : 'Belum ada sesi untuk poli ini'}
+                      : 'Belum ada sesi aktif'}
               </p>
             </div>
           </aside>
@@ -296,27 +240,31 @@ function DisplayMetric({
   )
 }
 
-function pickDisplaySchedule(
-  schedules: ScheduleAvailability[],
-  polyclinicId: string,
-) {
-  const scopedSchedules = polyclinicId
-    ? schedules.filter((schedule) => schedule.polyclinic_id === polyclinicId)
-    : schedules
-
+function pickDisplaySchedule(schedules: ScheduleAvailability[]) {
   return (
-    scopedSchedules.find(
+    schedules.find(
       (schedule) => schedule.queue_session_id && schedule.current_number > 0,
-    ) ?? scopedSchedules.find((schedule) => schedule.queue_session_id) ?? null
+    ) ?? schedules.find((schedule) => schedule.queue_session_id) ?? null
   )
 }
 
 function pickCurrentTicket(tickets: QueueTicketDetail[]) {
   return (
-    tickets.find((ticket) => ticket.status === 'serving') ??
-    tickets.find((ticket) => ticket.status === 'called') ??
+    [...tickets]
+      .filter((ticket) => ticket.status === 'serving' || ticket.status === 'called')
+      .sort((first, second) => {
+        const firstTime = getTicketCallTime(first)
+        const secondTime = getTicketCallTime(second)
+        return secondTime - firstTime
+      })[0] ??
     null
   )
+}
+
+function getTicketCallTime(ticket: QueueTicketDetail) {
+  return new Date(
+    ticket.serving_started_at ?? ticket.called_at ?? ticket.created_at,
+  ).getTime()
 }
 
 function queueStatusLabel(status: QueueStatus) {

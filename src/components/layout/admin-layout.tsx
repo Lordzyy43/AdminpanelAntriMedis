@@ -1,4 +1,4 @@
-import { Activity, LogOut, Stethoscope } from 'lucide-react'
+import { Activity, LogOut } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 
@@ -22,9 +22,11 @@ export function AdminLayout({ children }: AdminLayoutProps) {
     <div className="min-h-screen text-slate-950">
       <aside className="fixed inset-y-0 left-0 hidden w-72 border-r border-slate-200/80 bg-white/90 px-5 py-6 shadow-sm shadow-slate-900/5 backdrop-blur lg:block">
         <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-600 text-white shadow-lg shadow-teal-900/15">
-            <Stethoscope size={22} />
-          </div>
+          <img
+            alt="AntriMedis"
+            className="h-12 w-12 rounded-2xl object-cover shadow-lg shadow-teal-900/15"
+            src="/antrimedis_logo.png"
+          />
           <div>
             <p className="text-lg font-black">AntriMedis</p>
             <p className="text-xs font-bold text-slate-500">Admin Panel</p>
@@ -33,7 +35,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 
         <nav className="mt-8 space-y-2">
           {adminNavigation.map((item) => (
-            <NavItem icon={item.icon} key={item.to} to={item.to}>
+            <NavItem icon={item.icon} key={item.to} newTab={item.newTab} to={item.to}>
               {item.label}
             </NavItem>
           ))}
@@ -68,7 +70,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
           </div>
           <nav className="mt-4 flex gap-2 overflow-x-auto lg:hidden">
             {adminNavigation.map((item) => (
-              <NavItem icon={item.icon} key={item.to} to={item.to}>
+              <NavItem icon={item.icon} key={item.to} newTab={item.newTab} to={item.to}>
                 {item.label}
               </NavItem>
             ))}
@@ -82,13 +84,16 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 
 type NavItemProps = {
   icon: ReactNode
+  newTab?: boolean
   to: string
   children: ReactNode
 }
 
-function NavItem({ icon, to, children }: NavItemProps) {
+function NavItem({ icon, newTab, to, children }: NavItemProps) {
   return (
     <NavLink
+      rel={newTab ? 'noreferrer' : undefined}
+      target={newTab ? '_blank' : undefined}
       to={to}
       className={({ isActive }) =>
         [

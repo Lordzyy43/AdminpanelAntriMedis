@@ -11,6 +11,7 @@ import type { ReactNode } from 'react'
 export type NavigationItem = {
   icon: ReactNode
   label: string
+  newTab?: boolean
   to: string
 }
 
@@ -28,6 +29,7 @@ export const adminNavigation: NavigationItem[] = [
   {
     icon: <Monitor size={18} />,
     label: 'Display',
+    newTab: true,
     to: '/queue-display',
   },
   {
