@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
   CalendarPlus,
-  CalendarRange,
   CheckCircle2,
   Clock3,
   Copy,
@@ -29,7 +28,6 @@ import { FormDrawer } from '../../../components/ui/form-drawer'
 import { Input } from '../../../components/ui/input'
 import { PageHeader } from '../../../components/ui/page-header'
 import { Pagination } from '../../../components/ui/pagination'
-import { StatCard } from '../../../components/ui/stat-card'
 import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table-state'
 import { useToast } from '../../../components/ui/use-toast'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
@@ -169,14 +167,7 @@ export function ScheduleManagementPage() {
   )
   const references = referencesQuery.data
 
-  const stats = useMemo(() => {
-    return {
-      total: schedules.length,
-      open: schedules.filter((schedule) => schedule.status === 'open').length,
-      full: schedules.filter((schedule) => schedule.status === 'full').length,
-      closed: schedules.filter((schedule) => schedule.status === 'closed').length,
-    }
-  }, [schedules])
+ 
 
   const scopedSchedules = useMemo(
     () =>
@@ -200,10 +191,7 @@ export function ScheduleManagementPage() {
     }),
     [scopedSchedules],
   )
-  const selectedDateReadiness = useMemo(
-    () => buildDateReadiness(scopedSchedules, dateFilter, timeMode),
-    [dateFilter, scopedSchedules, timeMode],
-  )
+  
   const duplicateSourceDate = dateFilter || (timeMode === 'today' ? today : '')
 
   const duplicatableSchedulesOnSelectedDate = useMemo(
@@ -599,37 +587,6 @@ export function ScheduleManagementPage() {
           title="Manajemen Jadwal"
         />
 
-        <div className="grid gap-3 md:grid-cols-4">
-          <StatCard
-            helper="Seluruh jadwal praktik"
-            icon={<CalendarRange size={20} />}
-            label="Total Jadwal"
-            tone="teal"
-            value={stats.total}
-          />
-          <StatCard
-            helper="Bisa menerima antrean"
-            icon={<Clock3 size={20} />}
-            label="Buka"
-            tone="emerald"
-            value={stats.open}
-          />
-          <StatCard
-            helper="Kuota sudah penuh"
-            icon={<CalendarPlus size={20} />}
-            label="Penuh"
-            tone="amber"
-            value={stats.full}
-          />
-          <StatCard
-            helper="Tidak menerima antrean"
-            icon={<X size={20} />}
-            label="Tutup"
-            tone="slate"
-            value={stats.closed}
-          />
-        </div>
-
         {notice && !isDrawerOpen ? (
           <FeedbackBanner title={notice.title} tone={notice.tone}>
             {notice.text}
@@ -707,7 +664,6 @@ export function ScheduleManagementPage() {
           </div>
         </Card>
 
-        <DateReadinessPanel readiness={selectedDateReadiness} />
 
         <Card className="overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-3">
@@ -1126,51 +1082,6 @@ export function ScheduleManagementPage() {
   )
 }
 
-type DateReadiness = {
-  description: string
-  icon: ReactNode
-  metrics: Array<{ label: string; value: number | string }>
-  title: string
-  tone: 'neutral' | 'success' | 'warning'
-}
-
-function DateReadinessPanel({ readiness }: { readiness: DateReadiness }) {
-  const tone =
-    readiness.tone === 'success'
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-      : readiness.tone === 'warning'
-        ? 'border-amber-200 bg-amber-50 text-amber-800'
-        : 'border-slate-200 bg-slate-50 text-slate-700'
-
-  return (
-    <Card className={`border p-4 ${tone}`}>
-      <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
-        <div className="flex gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/70">
-            {readiness.icon}
-          </div>
-          <div>
-            <p className="text-xs font-black uppercase opacity-70">
-              Readiness Tanggal
-            </p>
-            <h3 className="mt-1 font-black">{readiness.title}</h3>
-            <p className="mt-1 text-sm font-semibold leading-6 opacity-80">
-              {readiness.description}
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
-          {readiness.metrics.map((metric) => (
-            <div className="rounded-xl bg-white/70 px-3 py-2" key={metric.label}>
-              <p className="text-xs font-bold opacity-70">{metric.label}</p>
-              <p className="mt-1 font-black">{metric.value}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </Card>
-  )
-}
 
 type DraftPreview = {
   conflictLabels: string[]
@@ -1467,85 +1378,6 @@ function buildDuplicateSuccessMessage(result: DuplicateScheduleResult) {
   return `${result.created} jadwal berhasil diduplikasi, ${result.failed} jadwal dilewati karena bentrok atau tidak valid.`
 }
 
-function buildDateReadiness(
-  schedules: ScheduleAvailability[],
-  dateFilter: string,
-  timeMode: ScheduleTimeMode,
-): DateReadiness {
-  const open = schedules.filter((schedule) => schedule.status === 'open').length
-  const full = schedules.filter((schedule) => schedule.status === 'full').length
-  const closed = schedules.filter((schedule) => schedule.status === 'closed').length
-  const cancelled = schedules.filter(
-    (schedule) => schedule.status === 'cancelled',
-  ).length
-  const capacity = schedules.reduce(
-    (total, schedule) => total + schedule.quota_limit,
-    0,
-  )
-  const taken = schedules.reduce((total, schedule) => total + schedule.total_taken, 0)
-  const label = dateFilter
-    ? formatDateLabel(dateFilter)
-    : scheduleTimeModeLabel(timeMode)
-
-  if (timeMode === 'past' && !dateFilter) {
-    return {
-      description:
-        'Jadwal terlewat ditampilkan sebagai arsip operasional. Gunakan Detail untuk audit, bukan untuk perubahan data.',
-      icon: <Clock3 size={20} />,
-      metrics: [
-        { label: 'Jadwal', value: schedules.length },
-        { label: 'Buka', value: open },
-        { label: 'Tutup', value: closed },
-        { label: 'Batal', value: cancelled },
-      ],
-      title: 'Mode histori jadwal',
-      tone: 'neutral',
-    }
-  }
-
-  if (schedules.length === 0) {
-    return {
-      description: `Belum ada jadwal untuk ${label}. Buat minimal satu jadwal agar pasien bisa melihat sesi antrean.`,
-      icon: <CalendarPlus size={20} />,
-      metrics: [
-        { label: 'Jadwal', value: 0 },
-        { label: 'Buka', value: 0 },
-        { label: 'Kuota', value: 0 },
-        { label: 'Terambil', value: 0 },
-      ],
-      title: 'Belum siap menerima antrean',
-      tone: 'warning',
-    }
-  }
-
-  if (open === 0) {
-    return {
-      description: `${label} sudah punya jadwal, tetapi belum ada sesi berstatus Buka. Pasien belum bisa mengambil nomor baru.`,
-      icon: <AlertTriangle size={20} />,
-      metrics: [
-        { label: 'Jadwal', value: schedules.length },
-        { label: 'Buka', value: open },
-        { label: 'Tutup', value: closed },
-        { label: 'Batal', value: cancelled },
-      ],
-      title: 'Jadwal belum menerima pasien',
-      tone: 'warning',
-    }
-  }
-
-  return {
-    description: `${label} siap ditampilkan ke pasien. Pantau kuota dan ubah status jika sesi perlu ditutup sementara.`,
-    icon: <CheckCircle2 size={20} />,
-    metrics: [
-      { label: 'Jadwal', value: schedules.length },
-      { label: 'Buka', value: open },
-      { label: 'Penuh', value: full },
-      { label: 'Kuota', value: `${taken}/${capacity}` },
-    ],
-    title: 'Jadwal siap operasional',
-    tone: 'success',
-  }
-}
 
 function buildDraftPreview({
   draft,
