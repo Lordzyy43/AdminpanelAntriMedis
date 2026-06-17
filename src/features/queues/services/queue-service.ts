@@ -42,6 +42,17 @@ export async function fetchQueueTickets(queueSessionId: string) {
   return data as QueueTicketDetail[]
 }
 
+export async function fetchQueueTicketsByDate(serviceDate: string) {
+  const { data, error } = await supabase
+    .from('v_queue_ticket_details')
+    .select('*')
+    .eq('schedule_date', serviceDate)
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+  return data as QueueTicketDetail[]
+}
+
 export async function callNextQueue(queueSessionId: string) {
   const { data, error } = await supabase.rpc('call_next_queue', {
     p_queue_session_id: queueSessionId,
