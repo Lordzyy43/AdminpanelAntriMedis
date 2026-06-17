@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Lock, Mail, Stethoscope } from "lucide-react";
+import { Lock, Mail } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
@@ -48,9 +48,11 @@ export function LoginPage() {
     <main className="grid min-h-screen bg-slate-50 px-6 py-10 lg:grid-cols-[1fr_460px] lg:gap-10">
       <section className="flex items-center">
         <div className="mx-auto max-w-2xl lg:mx-0 lg:pl-10">
-          <div className="mb-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-600 text-white shadow-lg shadow-teal-900/15">
-            <Stethoscope size={28} />
-          </div>
+          <img
+            alt="AntriMedis"
+            className="mb-8 h-16 w-16 rounded-2xl object-cover shadow-lg shadow-teal-900/15"
+            src="/antrimedis_logo.png"
+          />
           <p className="mb-3 text-sm font-black uppercase tracking-wide text-teal-700">
             AntriMedis Admin
           </p>

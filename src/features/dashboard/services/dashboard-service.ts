@@ -1,4 +1,5 @@
 import { supabase } from '../../../lib/supabase'
+import { getTodayInputValue } from '../../../lib/date'
 import type {
   Doctor,
   Polyclinic,
@@ -15,24 +16,24 @@ export type DashboardData = {
   tickets: QueueTicketDetail[]
 }
 
-export async function fetchDashboardData(): Promise<DashboardData> {
-  const today = toDateInputValue(new Date())
-
+export async function fetchDashboardData(
+  serviceDate = getTodayInputValue(),
+): Promise<DashboardData> {
   const [schedules, tickets, events, doctors, polyclinics] = await Promise.all([
     supabase
       .from('v_schedule_availability')
       .select('*')
-      .eq('schedule_date', today)
+      .eq('schedule_date', serviceDate)
       .order('start_time', { ascending: true }),
     supabase
       .from('v_queue_ticket_details')
       .select('*')
-      .eq('schedule_date', today)
+      .eq('schedule_date', serviceDate)
       .order('created_at', { ascending: false }),
     supabase
       .from('v_queue_event_feed')
       .select('*')
-      .eq('schedule_date', today)
+      .eq('schedule_date', serviceDate)
       .order('created_at', { ascending: false })
       .limit(12),
     supabase
@@ -60,11 +61,4 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     schedules: schedules.data as ScheduleAvailability[],
     tickets: tickets.data as QueueTicketDetail[],
   }
-}
-
-function toDateInputValue(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
 }
