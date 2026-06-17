@@ -30,6 +30,10 @@ import { PageHeader } from '../../../components/ui/page-header'
 import { Pagination } from '../../../components/ui/pagination'
 import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table-state'
 import { useToast } from '../../../components/ui/use-toast'
+import {
+  formatDateLabel,
+  useTodayInputValue,
+} from '../../../lib/date'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
 import { paginateItems } from '../../../lib/pagination'
 import { supabase } from '../../../lib/supabase'
@@ -44,6 +48,7 @@ import {
   callNextQueue,
   closeQueueSession,
   type CloseQueueSessionResult,
+  fetchPolyclinics,
   fetchQueueTickets,
   fetchQueueTicketTimeline,
   fetchSchedules,
@@ -53,7 +58,6 @@ import {
 
 const activeStatuses = ['waiting', 'called', 'serving', 'missed'] as const
 const pageSize = 8
-const today = toDateInputValue(new Date())
 const queueStatusOptions: Array<{ label: string; value: QueueStatus | 'all' }> = [
   { label: 'Semua status', value: 'all' },
   { label: 'Menunggu', value: 'waiting' },
@@ -90,10 +94,13 @@ function isActiveStatus(status: QueueStatus) {
 export function QueueManagementPage() {
   const queryClient = useQueryClient()
   const { notify } = useToast()
+  const today = useTodayInputValue()
   const [searchParams, setSearchParams] = useSearchParams()
   const sessionParam = searchParams.get('session')
   const ticketParam = searchParams.get('ticket')
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    () => sessionParam,
+  )
   const [detailTicket, setDetailTicket] = useState<QueueTicketDetail | null>(null)
   const [page, setPage] = useState(1)
   const [pendingAction, setPendingAction] = useState<PendingQueueAction | null>(null)
@@ -108,24 +115,20 @@ export function QueueManagementPage() {
     queryFn: () => fetchSchedules(today),
   })
 
-  const schedules = useMemo(() => schedulesQuery.data ?? [], [schedulesQuery.data])
+  const polyclinicsQuery = useQuery({
+    queryKey: ['queue-polyclinics'],
+    queryFn: fetchPolyclinics,
+  })
 
-  useEffect(() => {
-    if (!sessionParam) return
-    setSelectedSessionId(sessionParam)
-  }, [sessionParam])
+  const schedules = useMemo(() => schedulesQuery.data ?? [], [schedulesQuery.data])
+  const polyclinics = useMemo(
+    () => polyclinicsQuery.data ?? [],
+    [polyclinicsQuery.data],
+  )
 
   const polyclinicOptions = useMemo(
-    () =>
-      Array.from(
-        new Map(
-          schedules.map((schedule) => [
-            schedule.polyclinic_id,
-            schedule.polyclinic_name,
-          ]),
-        ),
-      ),
-    [schedules],
+    () => polyclinics.map((polyclinic) => [polyclinic.id, polyclinic.name] as const),
+    [polyclinics],
   )
   const filteredSchedules = useMemo(
     () =>
@@ -393,13 +396,14 @@ export function QueueManagementPage() {
     updateStatusMutation.error ??
     closeSessionMutation.error
 
-  useEffect(() => {
-    if (!ticketParam) return
-    const matchedTicket = tickets.find((ticket) => ticket.ticket_id === ticketParam)
-    if (matchedTicket) {
-      setDetailTicket(matchedTicket)
-    }
-  }, [ticketParam, tickets])
+  const ticketParamDetail = useMemo(
+    () =>
+      ticketParam
+        ? tickets.find((ticket) => ticket.ticket_id === ticketParam) ?? null
+        : null,
+    [ticketParam, tickets],
+  )
+  const activeDetailTicket = detailTicket ?? ticketParamDetail
 
   function confirmPendingAction() {
     if (!pendingAction) return
@@ -510,6 +514,7 @@ export function QueueManagementPage() {
                 onClick={() => {
                   void ticketsQuery.refetch()
                   void schedulesQuery.refetch()
+                  void polyclinicsQuery.refetch()
                 }}
               >
                 <RefreshCw size={16} />
@@ -895,7 +900,7 @@ export function QueueManagementPage() {
         </ConfirmDialog>
         <FormDrawer
           description="Detail pasien, posisi antrean, dan jadwal layanan."
-          open={Boolean(detailTicket)}
+          open={Boolean(activeDetailTicket)}
           title="Detail Antrean"
           onClose={() => {
             setDetailTicket(null)
@@ -906,13 +911,13 @@ export function QueueManagementPage() {
             }
           }}
         >
-          {detailTicket ? (
+          {activeDetailTicket ? (
             <TicketDetailPanel
-              ticket={detailTicket}
+              ticket={activeDetailTicket}
               onAction={(status) => {
                 openPendingAction({
                   status,
-                  ticket: detailTicket,
+                  ticket: activeDetailTicket,
                   type: 'update-status',
                 })
                 setDetailTicket(null)
@@ -1543,26 +1548,6 @@ function actionIcon(status: QueueStatus) {
   if (status === 'cancelled') return <OctagonX size={20} />
   if (status === 'called') return <Megaphone size={20} />
   return <Activity size={20} />
-}
-
-function formatDateLabel(dateValue: string) {
-  return new Intl.DateTimeFormat('id-ID', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(parseDateInputValue(dateValue))
-}
-
-function parseDateInputValue(dateValue: string) {
-  const [year, month, day] = dateValue.split('-').map(Number)
-  return new Date(year, month - 1, day)
-}
-
-function toDateInputValue(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
 }
 
 function StatusBadge({ status }: { status: QueueStatus }) {

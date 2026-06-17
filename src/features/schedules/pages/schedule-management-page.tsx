@@ -30,6 +30,13 @@ import { PageHeader } from '../../../components/ui/page-header'
 import { Pagination } from '../../../components/ui/pagination'
 import { TableEmptyState, TableSkeletonRows } from '../../../components/ui/table-state'
 import { useToast } from '../../../components/ui/use-toast'
+import {
+  formatDateLabel,
+  getTodayInputValue,
+  parseDateInputValue,
+  toDateInputValue,
+  useTodayInputValue,
+} from '../../../lib/date'
 import { friendlySupabaseError } from '../../../lib/friendly-error'
 import { paginateItems } from '../../../lib/pagination'
 import { supabase } from '../../../lib/supabase'
@@ -86,7 +93,6 @@ const statusOptions: Array<{ value: ScheduleStatus; label: string }> = [
   { value: 'cancelled', label: 'Batal' },
 ]
 
-const today = toDateInputValue(new Date())
 const pageSize = 8
 const timePresets = [
   { label: 'Pagi', start: '08:00', end: '12:00' },
@@ -95,26 +101,32 @@ const timePresets = [
   { label: 'Malam', start: '18:00', end: '21:00' },
 ]
 
-const emptyDraft: ScheduleDraft = {
-  branch_id: '',
-  polyclinic_id: '',
-  doctor_id: '',
-  schedule_date: today,
-  start_time: '08:00',
-  end_time: '12:00',
-  quota_limit: '20',
-  average_service_minutes: '10',
-  status: 'open',
-  notes: '',
+function createEmptyDraft(today: string): ScheduleDraft {
+  return {
+    branch_id: '',
+    polyclinic_id: '',
+    doctor_id: '',
+    schedule_date: today,
+    start_time: '08:00',
+    end_time: '12:00',
+    quota_limit: '20',
+    average_service_minutes: '10',
+    status: 'open',
+    notes: '',
+  }
 }
 
 export function ScheduleManagementPage() {
   const queryClient = useQueryClient()
   const { notify } = useToast()
+  const today = useTodayInputValue()
+  const emptyDraft = useMemo(() => createEmptyDraft(today), [today])
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
   const [detailSchedule, setDetailSchedule] = useState<ScheduleAvailability | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
-  const [draft, setDraft] = useState<ScheduleDraft>(emptyDraft)
+  const [draft, setDraft] = useState<ScheduleDraft>(() =>
+    createEmptyDraft(getTodayInputValue()),
+  )
   const [notice, setNotice] = useState<Notice | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ScheduleAvailability | null>(null)
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null)
@@ -173,10 +185,10 @@ export function ScheduleManagementPage() {
     () =>
       schedules.filter(
         (schedule) =>
-          matchesScheduleTimeMode(schedule, timeMode) &&
+          matchesScheduleTimeMode(schedule, timeMode, today) &&
           (!dateFilter || schedule.schedule_date === dateFilter),
       ),
-    [dateFilter, schedules, timeMode],
+    [dateFilter, schedules, timeMode, today],
   )
 
   const selectedDateStats = useMemo(
@@ -197,9 +209,9 @@ export function ScheduleManagementPage() {
   const duplicatableSchedulesOnSelectedDate = useMemo(
     () =>
       scopedSchedules.filter(
-        (schedule) => canDuplicateSchedule(schedule),
+        (schedule) => canDuplicateSchedule(schedule, today),
       ),
-    [scopedSchedules],
+    [scopedSchedules, today],
   )
 
   const filteredSchedules = useMemo(() => {
@@ -208,7 +220,7 @@ export function ScheduleManagementPage() {
     return schedules.filter((schedule) => {
       const matchesStatus =
         statusFilter === 'all' || schedule.status === statusFilter
-      const matchesTimeMode = matchesScheduleTimeMode(schedule, timeMode)
+      const matchesTimeMode = matchesScheduleTimeMode(schedule, timeMode, today)
       const matchesDate = !dateFilter || schedule.schedule_date === dateFilter
       const searchableText = [
         schedule.polyclinic_name,
@@ -226,7 +238,7 @@ export function ScheduleManagementPage() {
         searchableText.includes(normalizedSearch)
       )
     })
-  }, [dateFilter, schedules, searchTerm, statusFilter, timeMode])
+  }, [dateFilter, schedules, searchTerm, statusFilter, timeMode, today])
   const paginatedSchedules = useMemo(
     () => paginateItems(filteredSchedules, page, pageSize),
     [filteredSchedules, page],
@@ -377,12 +389,12 @@ export function ScheduleManagementPage() {
   }
 
   function startDuplicateSchedule(schedule: ScheduleAvailability) {
-    if (!canDuplicateSchedule(schedule)) {
+    if (!canDuplicateSchedule(schedule, today)) {
       setNotice({
-        text: isPastSchedule(schedule)
+        text: isPastSchedule(schedule, today)
           ? 'Jadwal terlewat hanya bisa dilihat sebagai histori. Buat jadwal baru untuk layanan berikutnya.'
           : 'Jadwal yang sudah batal tidak diduplikasi. Buat jadwal baru bila layanan ingin dibuka kembali.',
-        title: isPastSchedule(schedule) ? 'Jadwal terlewat' : 'Jadwal batal',
+        title: isPastSchedule(schedule, today) ? 'Jadwal terlewat' : 'Jadwal batal',
         tone: 'warning',
       })
       return
@@ -411,7 +423,7 @@ export function ScheduleManagementPage() {
   }
 
   function startEdit(schedule: ScheduleAvailability) {
-    if (!canEditSchedule(schedule)) {
+    if (!canEditSchedule(schedule, today)) {
       setNotice({
         text: 'Jadwal terlewat hanya bisa dilihat untuk audit. Buat jadwal baru jika perlu membuka layanan lagi.',
         title: 'Jadwal read-only',
@@ -514,7 +526,7 @@ export function ScheduleManagementPage() {
       null
 
     if (editingScheduleId) {
-      if (currentSchedule && !canEditSchedule(currentSchedule)) {
+      if (currentSchedule && !canEditSchedule(currentSchedule, today)) {
         setNotice({
           text: 'Jadwal terlewat tidak bisa diubah agar histori operasional tetap konsisten.',
           title: 'Jadwal read-only',
@@ -784,7 +796,7 @@ export function ScheduleManagementPage() {
                       <td className="px-4 py-3">
                         <ScheduleStatusBadge status={schedule.status} />
                         <div className="mt-1">
-                          <SchedulePhaseBadge schedule={schedule} />
+                          <SchedulePhaseBadge schedule={schedule} today={today} />
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -796,7 +808,7 @@ export function ScheduleManagementPage() {
                             <Eye size={16} />
                             Detail
                           </Button>
-                          {canEditSchedule(schedule) ? (
+                          {canEditSchedule(schedule, today) ? (
                             <Button
                               variant="secondary"
                               onClick={() => startEdit(schedule)}
@@ -805,7 +817,7 @@ export function ScheduleManagementPage() {
                               Edit
                             </Button>
                           ) : null}
-                          {canDuplicateSchedule(schedule) ? (
+                          {canDuplicateSchedule(schedule, today) ? (
                             <Button
                               variant="secondary"
                               onClick={() => startDuplicateSchedule(schedule)}
@@ -814,7 +826,7 @@ export function ScheduleManagementPage() {
                               Duplikat
                             </Button>
                           ) : null}
-                          {canDeleteSchedule(schedule) ? (
+                          {canDeleteSchedule(schedule, today) ? (
                             <Button
                               variant="danger"
                               onClick={() => setPendingDelete(schedule)}
@@ -1024,8 +1036,9 @@ export function ScheduleManagementPage() {
         >
           {detailSchedule ? (
             <ScheduleDetailPanel
-              canEdit={canEditSchedule(detailSchedule)}
+              canEdit={canEditSchedule(detailSchedule, today)}
               schedule={detailSchedule}
+              today={today}
               onEdit={() => {
                 startEdit(detailSchedule)
                 setDetailSchedule(null)
@@ -1054,9 +1067,9 @@ export function ScheduleManagementPage() {
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => {
             if (!pendingDelete) return
-            if (!canDeleteSchedule(pendingDelete)) {
+            if (!canDeleteSchedule(pendingDelete, today)) {
               setNotice({
-                text: isPastSchedule(pendingDelete)
+                text: isPastSchedule(pendingDelete, today)
                   ? 'Jadwal terlewat tidak bisa dihapus dari panel operasional. Simpan sebagai histori.'
                   : 'Jadwal yang sudah memiliki antrean tidak bisa dihapus. Gunakan status Tutup atau Batal.',
                 title: 'Hapus ditolak',
@@ -1251,10 +1264,12 @@ function ScheduleDetailPanel({
   canEdit,
   onEdit,
   schedule,
+  today,
 }: {
   canEdit: boolean
   onEdit: () => void
   schedule: ScheduleAvailability
+  today: string
 }) {
   const quotaUsage =
     schedule.quota_limit === 0
@@ -1280,7 +1295,7 @@ function ScheduleDetailPanel({
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <DetailMetric label="Tanggal" value={schedule.schedule_date} />
-          <DetailMetric label="Mode" value={schedulePhaseLabel(schedule)} />
+          <DetailMetric label="Mode" value={schedulePhaseLabel(schedule, today)} />
           <DetailMetric
             label="Jam praktik"
             value={`${schedule.start_time.slice(0, 5)}-${schedule.end_time.slice(0, 5)}`}
@@ -1468,29 +1483,10 @@ function addDays(dateValue: string, amount: number) {
   return toDateInputValue(date)
 }
 
-function formatDateLabel(dateValue: string) {
-  return new Intl.DateTimeFormat('id-ID', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(parseDateInputValue(dateValue))
-}
-
-function parseDateInputValue(dateValue: string) {
-  const [year, month, day] = dateValue.split('-').map(Number)
-  return new Date(year, month - 1, day)
-}
-
-function toDateInputValue(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
 function matchesScheduleTimeMode(
   schedule: ScheduleAvailability,
   mode: ScheduleTimeMode,
+  today: string,
 ) {
   if (mode === 'today') return schedule.schedule_date === today
   if (mode === 'upcoming') return schedule.schedule_date > today
@@ -1498,20 +1494,20 @@ function matchesScheduleTimeMode(
   return true
 }
 
-function isPastSchedule(schedule: ScheduleAvailability) {
+function isPastSchedule(schedule: ScheduleAvailability, today: string) {
   return schedule.schedule_date < today
 }
 
-function canEditSchedule(schedule: ScheduleAvailability) {
-  return !isPastSchedule(schedule)
+function canEditSchedule(schedule: ScheduleAvailability, today: string) {
+  return !isPastSchedule(schedule, today)
 }
 
-function canDeleteSchedule(schedule: ScheduleAvailability) {
-  return !isPastSchedule(schedule) && schedule.total_taken === 0
+function canDeleteSchedule(schedule: ScheduleAvailability, today: string) {
+  return !isPastSchedule(schedule, today) && schedule.total_taken === 0
 }
 
-function canDuplicateSchedule(schedule: ScheduleAvailability) {
-  return !isPastSchedule(schedule) && schedule.status !== 'cancelled'
+function canDuplicateSchedule(schedule: ScheduleAvailability, today: string) {
+  return !isPastSchedule(schedule, today) && schedule.status !== 'cancelled'
 }
 
 function scheduleTimeModeLabel(mode: ScheduleTimeMode) {
@@ -1524,7 +1520,7 @@ function scheduleTimeModeLabel(mode: ScheduleTimeMode) {
   return labels[mode]
 }
 
-function schedulePhaseLabel(schedule: ScheduleAvailability) {
+function schedulePhaseLabel(schedule: ScheduleAvailability, today: string) {
   if (schedule.schedule_date < today) return 'Terlewat'
   if (schedule.schedule_date > today) return 'Mendatang'
   if (schedule.status === 'cancelled') return 'Batal'
@@ -1582,8 +1578,14 @@ function ScheduleStatusBadge({ status }: { status: ScheduleStatus }) {
   )
 }
 
-function SchedulePhaseBadge({ schedule }: { schedule: ScheduleAvailability }) {
-  const label = schedulePhaseLabel(schedule)
+function SchedulePhaseBadge({
+  schedule,
+  today,
+}: {
+  schedule: ScheduleAvailability
+  today: string
+}) {
+  const label = schedulePhaseLabel(schedule, today)
   const tone =
     label === 'Berjalan'
       ? 'bg-teal-50 text-teal-700'

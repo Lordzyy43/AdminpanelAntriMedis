@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Clock3, Maximize2, Minimize2, RefreshCw } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '../../../components/ui/button'
+import { formatDateLabel, useTodayInputValue } from '../../../lib/date'
 import { supabase } from '../../../lib/supabase'
 import type {
   QueueStatus,
@@ -11,12 +12,11 @@ import type {
 } from '../../../types/queue'
 import { fetchQueueTicketsByDate, fetchSchedules } from '../services/queue-service'
 
-const today = toDateInputValue(new Date())
-
 export function QueueDisplayPage() {
   const queryClient = useQueryClient()
+  const today = useTodayInputValue()
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [lastAnnouncedTicket, setLastAnnouncedTicket] = useState<string | null>(null)
+  const lastAnnouncedTicketRef = useRef<string | null>(null)
 
   const schedulesQuery = useQuery({
     queryKey: ['queue-display-schedules', today],
@@ -38,23 +38,15 @@ export function QueueDisplayPage() {
   const tickets = useMemo(() => ticketsQuery.data ?? [], [ticketsQuery.data])
   const currentTicket = useMemo(() => pickCurrentTicket(tickets), [tickets])
   useEffect(() => {
-  if (!currentTicket) return
+    if (!currentTicket) return
+    if (currentTicket.status !== 'called' && currentTicket.status !== 'serving') return
 
-  const ticketKey =
-    `${currentTicket.queue_session_id}-${currentTicket.queue_number}`
+    const ticketKey = `${currentTicket.queue_session_id}-${currentTicket.queue_number}`
+    if (ticketKey === lastAnnouncedTicketRef.current) return
 
-  if (ticketKey === lastAnnouncedTicket) return
-
-  if (
-    currentTicket.status === 'called' ||
-    currentTicket.status === 'serving'
-  ) {
-    console.log('ANNOUNCING:', currentTicket.queue_code)
-
-    announceQueue(currentTicket)
-    setLastAnnouncedTicket(ticketKey)
-  }
-}, [currentTicket, lastAnnouncedTicket])
+    lastAnnouncedTicketRef.current = ticketKey
+    return announceQueue(currentTicket)
+  }, [currentTicket])
   const displaySchedule = useMemo(
     () =>
       schedules.find(
@@ -122,43 +114,6 @@ export function QueueDisplayPage() {
     }
   }
 
-  function announceQueue(ticket: QueueTicketDetail) {
-  const speak = () => {
-    const utterance = new SpeechSynthesisUtterance(
-      `Perhatian. Nomor antrean ${ticket.queue_code}. Silakan menuju ruang pemeriksaan.`
-    )
-
-    utterance.lang = 'id-ID'
-    utterance.rate = 0.9
-    utterance.pitch = 1
-    utterance.volume = 1
-
-    const voices = window.speechSynthesis.getVoices()
-
-    const indoVoice = voices.find(
-      voice =>
-        voice.lang.toLowerCase().includes('id')
-    )
-
-    if (indoVoice) {
-      utterance.voice = indoVoice
-    }
-
-    window.speechSynthesis.cancel()
-    window.speechSynthesis.speak(utterance)
-  }
-
-  const voices = window.speechSynthesis.getVoices()
-
-  if (voices.length > 0) {
-    speak()
-  } else {
-    window.speechSynthesis.onvoiceschanged = () => {
-      speak()
-    }
-  }
-}
-
   return (
     <main className="min-h-screen overflow-hidden bg-slate-950 text-white">
       <div className="flex min-h-screen flex-col px-10 py-8">
@@ -176,7 +131,13 @@ export function QueueDisplayPage() {
               <p className="text-xs font-black uppercase text-slate-300">
                 Hari Ini
               </p>
-              <p className="text-2xl font-black">{formatDateLabel(today)}</p>
+              <p className="text-2xl font-black">
+                {formatDateLabel(today, {
+                  day: '2-digit',
+                  month: 'long',
+                  year: 'numeric',
+                })}
+              </p>
             </div>
             <Button
               variant="secondary"
@@ -337,22 +298,45 @@ function queueStatusLabel(status: QueueStatus) {
   return labels[status]
 }
 
-function formatDateLabel(dateValue: string) {
-  return new Intl.DateTimeFormat('id-ID', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  }).format(parseDateInputValue(dateValue))
-}
+function announceQueue(ticket: QueueTicketDetail) {
+  if (!('speechSynthesis' in window)) return undefined
 
-function parseDateInputValue(value: string) {
-  const [year, month, day] = value.split('-').map(Number)
-  return new Date(year, month - 1, day)
-}
+  const synth = window.speechSynthesis
+  const speak = () => {
+    const utterance = new SpeechSynthesisUtterance(
+      `Perhatian. Nomor antrean ${ticket.queue_code}. Silakan menuju ruang pemeriksaan.`,
+    )
 
-function toDateInputValue(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+    utterance.lang = 'id-ID'
+    utterance.rate = 0.9
+    utterance.pitch = 1
+    utterance.volume = 1
+
+    const indoVoice = synth
+      .getVoices()
+      .find((voice) => voice.lang.toLowerCase().includes('id'))
+
+    if (indoVoice) {
+      utterance.voice = indoVoice
+    }
+
+    synth.cancel()
+    synth.speak(utterance)
+  }
+
+  if (synth.getVoices().length > 0) {
+    speak()
+    return undefined
+  }
+
+  const handleVoicesChanged = () => {
+    speak()
+    synth.removeEventListener('voiceschanged', handleVoicesChanged)
+  }
+
+  synth.addEventListener('voiceschanged', handleVoicesChanged)
+
+  return () => {
+    synth.removeEventListener('voiceschanged', handleVoicesChanged)
+  }
 }

@@ -8,15 +8,17 @@ import { Button, LinkButton } from '../../../components/ui/button'
 import { Card } from '../../../components/ui/card'
 import { PageHeader } from '../../../components/ui/page-header'
 import { TableEmptyState } from '../../../components/ui/table-state'
+import { useTodayInputValue } from '../../../lib/date'
 import { supabase } from '../../../lib/supabase'
 import type { QueueStatus, QueueTicketDetail } from '../../../types/queue'
 import { fetchDashboardData } from '../services/dashboard-service'
 
 export function DashboardPage() {
   const queryClient = useQueryClient()
+  const today = useTodayInputValue()
   const dashboardQuery = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: fetchDashboardData,
+    queryKey: ['dashboard', today],
+    queryFn: () => fetchDashboardData(today),
   })
 
   useEffect(() => {
