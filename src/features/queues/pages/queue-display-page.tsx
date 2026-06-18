@@ -1,27 +1,34 @@
-  import { useQuery, useQueryClient } from '@tanstack/react-query'
-  import {
-    Activity,
-    Clock3,
-    Maximize2,
-    Minimize2,
-    RefreshCw,
-  } from 'lucide-react'
-  import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import type { RealtimePostgresChangesPayload } from '@supabase/realtime-js'
+import {
+  Activity,
+  Clock3,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { MutableRefObject } from 'react'
 
-  import { Button } from '../../../components/ui/button'
-  import { formatDateLabel, useTodayInputValue } from '../../../lib/date'
-  import { supabase } from '../../../lib/supabase'
-  import type {
-    QueueStatus,
-    QueueTicketDetail,
-    ScheduleAvailability,
-  } from '../../../types/queue'
-  import { fetchQueueTicketsByDate, fetchSchedules } from '../services/queue-service'
+import { Button } from '../../../components/ui/button'
+import { formatDateLabel, useTodayInputValue } from '../../../lib/date'
+import { supabase } from '../../../lib/supabase'
+import type {
+  QueueStatus,
+  QueueTicketDetail,
+  ScheduleAvailability,
+} from '../../../types/queue'
+import {
+  fetchQueueTicketDetail,
+  fetchQueueTicketsByDate,
+  fetchSchedules,
+} from '../services/queue-service'
 
-  export function QueueDisplayPage() {
-    const queryClient = useQueryClient()
-    const today = useTodayInputValue()
-    const { isFullscreen, toggleFullscreen } = useFullscreenState()
+export function QueueDisplayPage() {
+  const queryClient = useQueryClient()
+  const today = useTodayInputValue()
+  const { isFullscreen, toggleFullscreen } = useFullscreenState()
+  const lastAnnouncedTicketRef = useRef<string | null>(null)
 
     const schedulesQuery = useQuery({
       queryKey: ['queue-display-schedules', today],
@@ -56,8 +63,12 @@
       isLoading: schedulesQuery.isLoading || ticketsQuery.isLoading,
     })
 
-    useQueueAnnouncement(currentTicket)
-    useQueueDisplayRealtime(queryClient)
+    useQueueAnnouncement(currentTicket, lastAnnouncedTicketRef)
+    useQueueDisplayRealtime({
+      lastAnnouncedTicketRef,
+      queryClient,
+      today,
+    })
 
     function refreshDisplayData() {
       void schedulesQuery.refetch()
@@ -452,30 +463,48 @@
     return { isFullscreen, toggleFullscreen }
   }
 
-  function useQueueAnnouncement(currentTicket: QueueTicketDetail | null) {
-    const lastAnnouncedTicketRef = useRef<string | null>(null)
-
+  function useQueueAnnouncement(
+    currentTicket: QueueTicketDetail | null,
+    lastAnnouncedTicketRef: MutableRefObject<string | null>,
+  ) {
     useEffect(() => {
       if (!currentTicket) return
       if (currentTicket.status !== 'called' && currentTicket.status !== 'serving') return
 
-      const ticketKey = `${currentTicket.queue_session_id}-${currentTicket.queue_number}`
+      const ticketKey = getAnnouncementKey(currentTicket)
       if (ticketKey === lastAnnouncedTicketRef.current) return
 
       lastAnnouncedTicketRef.current = ticketKey
       return announceQueue(currentTicket)
-    }, [currentTicket])
+    }, [currentTicket, lastAnnouncedTicketRef])
   }
 
-  function useQueueDisplayRealtime(queryClient: ReturnType<typeof useQueryClient>) {
+  function useQueueDisplayRealtime({
+    lastAnnouncedTicketRef,
+    queryClient,
+    today,
+  }: {
+    lastAnnouncedTicketRef: MutableRefObject<string | null>
+    queryClient: ReturnType<typeof useQueryClient>
+    today: string
+  }) {
     useEffect(() => {
       const channel = supabase
         .channel('queue-display-live')
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'queue_tickets' },
-          () => {
+          (payload: RealtimePostgresChangesPayload<QueueTicketRealtimeRow>) => {
             void queryClient.invalidateQueries({ queryKey: ['queue-display-tickets'] })
+
+            if (!shouldAnnounceRealtimePayload(payload)) return
+
+            const nextTicket = payload.new as QueueTicketRealtimeRow
+            void announceRealtimeQueue({
+              lastAnnouncedTicketRef,
+              ticketId: nextTicket.ticket_id,
+              today,
+            })
           },
         )
         .on(
@@ -498,11 +527,11 @@
       return () => {
         void supabase.removeChannel(channel)
       }
-    }, [queryClient])
+    }, [lastAnnouncedTicketRef, queryClient, today])
   }
 
   function announceQueue(ticket: QueueTicketDetail) {
-    if (!('speechSynthesis' in window)) return undefined
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return undefined
 
     const synth = window.speechSynthesis
     const speak = () => {
@@ -537,9 +566,56 @@
       synth.removeEventListener('voiceschanged', handleVoicesChanged)
     }
 
-    synth.addEventListener('voiceschanged', handleVoicesChanged)
+  synth.addEventListener('voiceschanged', handleVoicesChanged)
 
     return () => {
       synth.removeEventListener('voiceschanged', handleVoicesChanged)
     }
   }
+
+  async function announceRealtimeQueue({
+    lastAnnouncedTicketRef,
+    ticketId,
+    today,
+  }: {
+    lastAnnouncedTicketRef: MutableRefObject<string | null>
+    ticketId: string
+    today: string
+  }) {
+    try {
+      const ticket = await fetchQueueTicketDetail(ticketId)
+      if (ticket.schedule_date !== today) return
+      if (ticket.status !== 'called' && ticket.status !== 'serving') return
+
+      const ticketKey = getAnnouncementKey(ticket)
+      if (ticketKey === lastAnnouncedTicketRef.current) return
+
+      lastAnnouncedTicketRef.current = ticketKey
+      announceQueue(ticket)
+    } catch {
+      // Display tetap akan mendapat data terbaru lewat invalidasi query.
+    }
+  }
+
+  function shouldAnnounceRealtimePayload(
+    payload: RealtimePostgresChangesPayload<QueueTicketRealtimeRow>,
+  ) {
+    if (payload.eventType !== 'UPDATE') return false
+
+    const nextStatus = payload.new.status
+    const previousStatus = payload.old.status
+
+    if (nextStatus !== 'called' && nextStatus !== 'serving') return false
+    return previousStatus !== nextStatus
+  }
+
+  function getAnnouncementKey(
+    ticket: Pick<QueueTicketDetail, 'queue_session_id' | 'queue_number'>,
+  ) {
+    return `${ticket.queue_session_id}-${ticket.queue_number}`
+  }
+
+type QueueTicketRealtimeRow = {
+  ticket_id: string
+  status: QueueStatus
+}
